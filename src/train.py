@@ -70,11 +70,11 @@ class Trainer:
         model.to(self.device)
         loss_save = list()
 
-        for data, label in tqdm(self.data_loader, desc="Epoch : {}".format(epoch)):
-            x = torch.LongTensor(data).to(self.device)
-            label = torch.LongTensor(label).to(self.device)
+        for data in tqdm(self.data_loader, desc="Epoch : {}".format(epoch)):
+            encoder_input = data["encoder"].to(self.device)
+            decoder_input = data["decoder"].to(self.device)
 
-            loss,  acc = model.forward(x, label)
+            loss,  acc = model.forward(encoder_input, decoder_input)
             
             if self.type =='train':
                 self.optim_process(model, loss)

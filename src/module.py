@@ -50,13 +50,15 @@ class positional_encoding(nn.Module):
         N, T = inputs.size() # 2d tensor
 
         position_ind = torch.unsqueeze(torch.arange(0,T), 0).repeat(N, 1).long() # (T, h_units)
+        print(position_ind)
         position_enc = torch.Tensor([[ pos/ np.power(10000, 2.*i/self.h_units) for i in range(self.h_units)] for pos in range(T)]) # (T, h_units)
 
         position_enc[:, 0::2] = torch.sin(position_enc[:, 0::2])
         position_enc[:, 1::2] = torch.cos(position_enc[:, 1::2])
         padding_idx = 0
-
+        print(position_enc)
         outputs = F.embedding(position_ind, position_enc, padding_idx)
+        print(outputs)
 
         if self.scale:
             outputs = outputs * self.h_units **0.5
@@ -117,13 +119,6 @@ class multihead_attention(nn.Module):
         #activation
         outputs = F.softmax(outputs, dim=-1) #(h*batch_size, sequence_q, sequence_k)
 
-        # query masking
-        #query_masks = torch.sign(torch.abs(torch.sum(queries, dim=-1))) # (bs, sequence_q)
-        #query_masks = query_masks.repeat(self.n_head, 1) # (h*bs, sequence_q)
-        #query_masks = torch.unsqueeze(query_masks, 2).repeat(1,1,keys.size()[1]) #(h*bs, sequence_q, sequence_k)
-        
-        #outputs = outputs*query_masks #???
-
         # weighted sum
         outputs = torch.bmm(outputs, V_) #(h*bs, sequence_q, dimension/h)
         outputs = torch.cat(torch.chunk(outputs, self.n_head, dim=0), dim=2) #(bs, sequence_q, dimension)
@@ -172,10 +167,10 @@ if __name__=="__main__":
     num_units=512
     inputs = torch.randn((100, 10))
     outputs = positional_encoding(num_units)(inputs)
-    outputs = multihead_attention(num_units)(outputs, outputs, outputs)
-    print(outputs)
-    outputs = feedforward(num_units)(outputs)
-    print(outputs)
+    # outputs = multihead_attention(num_units)(outputs, outputs, outputs)
+    # print(outputs)
+    # outputs = feedforward(num_units)(outputs)
+    # print(outputs)
 
 
 
