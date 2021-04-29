@@ -1,0 +1,24 @@
+{"train": {"batch_size": 32, "max_lr": 0.001, "clip": 5, "warmup_steps": 4000},
+"model": {"max_sen_len": 10, "min_cnt": 20, "h_units": 512, "n_blocks": 6, "epochs": 20, "n_head": 8, "d_rate": 0.1, "eval_epoch": 20, "use_pretrain": "False"},
+"data_info": {"en_de": {"raw_tr_total":"./data/raw/en_de/train/train.sum.txt",
+                        "raw_tr_de": "./data/raw/en_de/train/train.de.txt",
+                        "raw_tr_en":  "./data/raw/en_de/train/train.en.txt",
+                        "prepro_tr_de": "./data/prepro/en_de/train.de.txt",
+                        "prepro_tr_en": "./data/prepro/en_de/train.en.txt",
+                        "raw_te_de": "./data/raw/en_de/test/newstest2014.de.txt",
+                        "raw_te_en":  "./data/raw/en_de/test/newstest2014.en.txt",
+                        "prepro_te_de": "./data/prepro/en_de/test.de.txt",
+                        "prepro_te_en": "./data/prepro/en_de/test.en.txt",
+
+                        "vocab_path": "./data/prepro/en_de/vocab.pkl",
+                        "model": "bye_pair_encoding",
+                        "model_type": "bpe",
+                        "vocab_size": 37000},
+                "en_fr": {"vocab_size": 32000,
+                          "model_type": "word",
+                          "model_name": "word_piece_encoding",
+                          "vocab_path": "./data/prepro/en_fr/vocab.pkl"}}
+
+}
+
+
