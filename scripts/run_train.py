@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--mode", type=str, default=">____<")
 parser.add_argument("--log", type=str, default="loss")
 parser.add_argument("--config", type=str, default="default")
-parser.add_argument("--gpu", type=str, default=None)
+parser.add_argument("--gpu", type=str, default='0')
 parser.add_argument("--dataset", type=str, default="en_de")
 parser.add_argument("--model", type=str, default="base")
 
@@ -56,57 +56,74 @@ if not os.path.exists(args.log):
     
 writer = SummaryWriter(tb_loc)
 
-from src.model import Transformer as model
+from src.model_2 import TransformerModel as model
 import src.train as train
-
-# vocab
-de2idx = torch.load(config.prepro_vocab.de)
-en2idx = torch.load(config.prepro_vocab.en)
-enc_voc = len(de2idx)
-dec_voc = len(en2idx)
+import src.data_load as data
 
 # data loader
-train_data = torch.load(config.path_prepro.en_de[0])
-test_data = torch.load(config.path_prepro.en_de[1])
+data_info = config.data_info[args.dataset]
+train_loader  = data.get_data_loader([data_info.prepro_tr_en, data_info.prepro_tr_de], config.train.batch_size ,False, 10, True)
+#valid_loader = data.get_data_loader(data_list, config.train.batch_size, False, 10, True)
+test_loader = data.get_data_loader([data_info.prepro_te_en, data_info.prepro_te_de], config.train.batch_size, False, 10, True)
 
-train_loader = get_batch_indices(len(train_data["data"]), config.train.batch_size, train_data)
-test_loader = get_batch_indices(len(test_data["data"]), config.train.batch_size, test_data)
-#print("dataset iteration num : train {} | test {}".format(len(train_loader), len(test_loader)))
+print("dataset iteration num : train {} | test {}".format(len(train_loader), len(test_loader)))
 
 # model load
-model = model(config, args)
+model = model(config, args, device)
 
 # trainer load
 trainer = train.get_trainer(config, args,device, train_loader, writer, "train")
 #dev_trainer = train.get_trainer(config, args,device, dev_loader, writer, "dev")
-test_loader = train.get_trainer(config, args,device, test_loader, writer, "test")
+test_trainer = train.get_trainer(config, args,device, test_loader, writer, "test")
 
+total_steps = args.epochs * len(train_loader)
 optimizer = train.get_optimizer(model, args.optim)
-schedular = train.get_lr_schedular(optimizer)
+schedular = train.get_lr_schedular(optimizer, config)
 
 trainer.init_optimizer(optimizer)
 trainer.init_schedular(schedular)
 
 early_stop_loss = []
-total_epoch = args.epochs * 100
+total_epoch = 100000//len(train_loader)
+print("total epoch {}".format(total_epoch))
 for epoch in tqdm(range(1, args.epochs+1)):
-    trainer.train_epoch(model, epoch)
-    valid_loss = dev_trainer.train_epoch(model, epoch, trainer.global_step)
-    early_stop_loss.extend(valid_loss)
+    trainer.train_epoch(model, epoch, save_path=ckpnt_loc+"/ckpnt.pkl")
 
-    if args.use_earlystop and early_stop_loss[-2] < early_stop_loss[-1]:
-        break
+
+    #test_loss = test_trainer.train_epoch(model, epoch, trainer.global_step)
+    #early_stop_loss.extend(test_loss)
+
+    # if args.use_earlystop and early_stop_loss[-2] < early_stop_loss[-1]:
+    #     break
     ### torch model, param, save
 
-    train_eval = trainer.evaluator
-    valid_eval = dev_trainer.evaluator
-    print("epoch : {} | train_eval : {} | valid_eval : {}".format(epoch, train_eval, valid_eval))
 
 
-print('train finished...')
-# test evaluation
-
-print("finished !! ")
+# #############################################################################
+#
+# for data in trainer.data_loader:
+#     break
+#
+# encoder_input = data["encoder"][:, 1:].to(trainer.device)  # 99
+# decoder_input = data["decoder"].to(trainer.device)  # 100######################
+#
+# loss = model(encoder_input, decoder_input)
+#
+# torch.argmax(model.logits[0], -1)
+#
+# decoder_input[0]
+# y = decoder_input
+# dec = y * (1 - y.eq(2.).float())
+# dec = dec[:, :-1].long()
+# dec[0]
+#
+#
+# label = y[:, 1:].contiguous()
+# ########################################################################
+# print('train finished...')
+# # test evaluation
+#
+# print("finished !! ")
 
     
 
