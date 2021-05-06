@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--mode", type=str, default=">____<")
 parser.add_argument("--log", type=str, default="loss")
 parser.add_argument("--config", type=str, default="default")
-parser.add_argument("--gpu", type=str, default='0')
+parser.add_argument("--gpu", type=str, default=None)
 parser.add_argument("--dataset", type=str, default="en_de")
 parser.add_argument("--model", type=str, default="base")
 
@@ -30,7 +30,7 @@ parser.add_argument("--g_norm", type=str, default=5)
 parser.add_argument("--learning_rate", type=float,default=1e-3)
 
 parser.add_argument("--use_earlystop", type=int, default=1)
-parser.add_argument('--epochs', type=int, default=5)
+parser.add_argument('--total_step', type=int, default=100000)
 
 args = parser.parse_args()
 config = load_config(args.config)
@@ -60,13 +60,38 @@ from src.model_2 import TransformerModel as model
 import src.train as train
 import src.data_load as data
 
+# ##########################################################debug#########################################################
+# data_list = config.data_info[args.dataset]
+# test_list = [data_list.prepro_te_en, data_list.prepro_te_de]
+# train_loader = data.get_data_loader(test_list, config.train.batch_size, False, 10, True)
+# # model load
+# model = model(config, args, device)
+# model = model.to(device)
+# trainer = train.get_trainer(config, args,device, train_loader, writer, "test")
+#
+# optimizer = train.get_optimizer(model, args.optim)
+# schedular = train.get_lr_schedular(optimizer, config)
+#
+# trainer.init_optimizer(optimizer)
+# trainer.init_schedular(schedular)
+#
+# early_stop_loss = []
+# total_epoch = args.total_step*config.train.accumulation_step // len(train_loader)
+# print("total epoch {}".format(total_epoch))
+# for epoch in tqdm(range(1, total_epoch+1)):
+#     trainer.train_epoch(model, epoch)
+##########################################################train ##################################################
+# data_list
+data_list = config.data_info[args.dataset]
+train_list = [data_list.prepro_tr_en, data_list.prepro_tr_de]
+#valid_list = [data_list.prepro_tr_en, data_list.prepro_tr_de]
+test_list = [data_list.prepro_te_en, data_list.prepro_te_de]
 # data loader
-data_info = config.data_info[args.dataset]
-train_loader  = data.get_data_loader([data_info.prepro_tr_en, data_info.prepro_tr_de], config.train.batch_size ,False, 10, True)
-#valid_loader = data.get_data_loader(data_list, config.train.batch_size, False, 10, True)
-test_loader = data.get_data_loader([data_info.prepro_te_en, data_info.prepro_te_de], config.train.batch_size, False, 10, True)
+train_loader  = data.get_data_loader(train_list, config.train.batch_size, False, 10, True)
+#dev_loader = data.get_data_loader(valid_list, config.train.batch_size, False, 10, True)
+test_loader = data.get_data_loader(test_list, config.train.batch_size, False, 10, True)
 
-print("dataset iteration num : train {} | test {}".format(len(train_loader), len(test_loader)))
+print("dataset iteration num : train {} || test {}".format(len(train_loader), len(test_loader)))
 
 # model load
 model = model(config, args, device)
@@ -76,7 +101,6 @@ trainer = train.get_trainer(config, args,device, train_loader, writer, "train")
 #dev_trainer = train.get_trainer(config, args,device, dev_loader, writer, "dev")
 test_trainer = train.get_trainer(config, args,device, test_loader, writer, "test")
 
-total_steps = args.epochs * len(train_loader)
 optimizer = train.get_optimizer(model, args.optim)
 schedular = train.get_lr_schedular(optimizer, config)
 
@@ -84,48 +108,29 @@ trainer.init_optimizer(optimizer)
 trainer.init_schedular(schedular)
 
 early_stop_loss = []
-total_epoch = 100000//len(train_loader)
+save_path = "/user15/workspace/Transformer/log/0.001/ckpnt/"
+total_epoch = args.total_step*config.train.accumulation_step // len(train_loader)
 print("total epoch {}".format(total_epoch))
-for epoch in tqdm(range(1, args.epochs+1)):
-    trainer.train_epoch(model, epoch, save_path=ckpnt_loc+"/ckpnt.pkl")
-
-
-    #test_loss = test_trainer.train_epoch(model, epoch, trainer.global_step)
-    #early_stop_loss.extend(test_loss)
-
+for epoch in tqdm(range(1, total_epoch+1)):
+    trainer.train_epoch(model, epoch, save_path=save_path)
+    # test_loss = test_trainer.train_epoch(model, epoch, trainer.global_step)
+    # early_stop_loss.extend(valid_loss)
+    #
     # if args.use_earlystop and early_stop_loss[-2] < early_stop_loss[-1]:
     #     break
-    ### torch model, param, save
+    # ### torch model, param, save
+    #
+    # train_eval = trainer.evaluator
+    # valid_eval = dev_trainer.evaluator
+    # print("epoch : {} | train_eval : {} | valid_eval : {}".format(epoch, train_eval, valid_eval))
 
 
-
-# #############################################################################
-#
-# for data in trainer.data_loader:
-#     break
-#
-# encoder_input = data["encoder"][:, 1:].to(trainer.device)  # 99
-# decoder_input = data["decoder"].to(trainer.device)  # 100######################
-#
-# loss = model(encoder_input, decoder_input)
-#
-# torch.argmax(model.logits[0], -1)
-#
-# decoder_input[0]
-# y = decoder_input
-# dec = y * (1 - y.eq(2.).float())
-# dec = dec[:, :-1].long()
-# dec[0]
-#
-#
-# label = y[:, 1:].contiguous()
-# ########################################################################
-# print('train finished...')
+print('train finished...')
 # # test evaluation
 #
 # print("finished !! ")
-
-    
+#
+# ########################################################################################################################
 
 
 

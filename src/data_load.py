@@ -9,13 +9,11 @@ def get_data_loader(data_list, batch_size, shuffle=False,num_workers=10,  drop_l
 
 def make_padding(samples):
     def padd(samples):
-        max_length = 100
-        batch = torch.zeros(len(samples), max_length).to(torch.long)
+        length = [len(s) for s in samples]
+        max_length = max(length)
+        batch = torch.zeros(len(length), max_length).to(torch.long)
         for idx, sample in enumerate(samples):
-            if len(sample) > max_length:
-                batch[idx, :] = torch.cat((torch.LongTensor(sample[:max_length-1]), torch.LongTensor([2.])))
-            else:
-                batch[idx, :len(sample)] = sample
+            batch[idx, :length[idx]] = torch.LongTensor(sample)
         return torch.LongTensor(batch)
     encoder = [sample["encoder"] for sample in samples]
     decoder = [sample["decoder"] for sample in samples]
@@ -23,6 +21,7 @@ def make_padding(samples):
     decoder = padd(decoder)
 
     return {'encoder':encoder.contiguous(),"decoder":decoder.contiguous()}
+
 
 class Make_Dataset(Dataset):
     def __init__(self, path):
@@ -39,11 +38,14 @@ class Make_Dataset(Dataset):
         return {"encoder":torch.LongTensor(self.encoder_input[idx]), "decoder":torch.LongTensor(self.decoder_input[idx])}
 
 
-# path = ["/hdd/user15/workspace/Transformer/data/prepro/en_de/test.en.txt","/hdd/user15/workspace/Transformer/data/prepro/en_de/test.de.txt"]
-# dataloader= get_data_loader(path, 10)
+# path = ["/user15/workspace/Transformer/data/prepro/en_de/test.en.txt","/user15/workspace/Transformer/data/prepro/en_de/test.de.txt"]
+# dataloader= get_data_loader(path, 16)
 # len(dataloader)
 # for i in dataloader:
-#     print(i)
+#     print(len(i['encoder'][0]))
+#     print(len(i["decoder"][0]))
+# batch 그때그때 만들어서 옴
+
 
 
 
