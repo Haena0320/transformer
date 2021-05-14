@@ -42,7 +42,6 @@ class ScaledDotProduct(nn.Module):
         self.device = device
 
     def forward(self, query, key, value, attn_mask=None):
-
         # (bs * h, seq_q, dimension/h) (128, 56, 64)
         # (bs * h, seq_k, dimension/h)
         # (bs * h, seq_v, dimension/h)
@@ -50,13 +49,13 @@ class ScaledDotProduct(nn.Module):
         _, Q, _ = query.size()
         attn_output = torch.bmm(query, key.transpose(1,2))/dimension_k**0.5 # attn_output : (bs, seq_q, seq_k)
         if attn_mask is not None:
-
             mask = torch.ones(Q,K)
             mask = 1-torch.tril(mask, diagonal=0)
             mask = mask*(-2**32)
             mask = mask.repeat(bs_h, 1, 1)
             device = torch.device("cuda:0")
-            attn_output +=  mask.to(device)
+            attn_output *=  mask.to(device)
+            #attn_output += mask
         attn_output = F.softmax(attn_output, dim=-1)
         attn_output = F.dropout(attn_output, p=self.dropout)
         output = torch.bmm(attn_output,value) # output : (bs, seq_q, d_model)
@@ -240,7 +239,7 @@ class TransformerDecoder(nn.Module):
 class Embedding(nn.Module):
     def __init__(self,d_model, vocab, device):
         super(Embedding, self).__init__()
-        self.word_embed = WordEncoding(d_model, vocab)
+        self.word_embed = WordEncoding(d_model, vocab).to(device)
         self.posit_embed = PositionEncoding(d_model=d_model, device=device)
         self.norm = LayerNorm(d_model)
         self.dropout = Dropout(p=0.1)
@@ -264,20 +263,19 @@ class TransformerModel(nn.Module):
         dropout = config.model.d_rate
 
         super(TransformerModel, self).__init__()
-        self.enc_emb = Embedding(d_model, vocab, device)
+        self.emb = Embedding(d_model, vocab, device)
         encoder = EncoderLayer(d_model, num_heads, dim_feedforward, dropout, device)
         self.enc = TransformerEncoder(encoder, num_layers, device)
 
-        self.dec_emb = Embedding(d_model, vocab, device)
         decoder = DecoderLayer(d_model, num_heads, dim_feedforward, dropout, device)
         self.dec = TransformerDecoder(decoder, num_layers, device)
         self.criterion = nn.Linear(d_model, vocab)
 
     def init_weights(self):
-        self.enc_emb.init_weights()
+        self.emb.init_weights()
         self.enc.init_weights()
-        self.dec_emb.init_weights()
         self.dec.init_weights()
+
 
     def forward(self, x, y):
         # <eos> token 제거
@@ -285,24 +283,28 @@ class TransformerModel(nn.Module):
         dec = dec[:, :-1].long()
 
         # forward
-        enc_emb = self.enc_emb(x)
+        enc_emb = self.emb(x)
         enc_output = self.enc(enc_emb)
-        dec_emb = self.dec_emb(dec)
+        dec_emb = self.emb(dec)
         dec_output = self.dec(dec_emb, enc_output, mask=1)
         dec_output = self.criterion(dec_output)
         loss = get_loss(y, dec_output)
         return loss
 
     def search(self, x, y):
+
         # encoding forward
-        enc_emb = self.enc_emb(x)
+        enc_emb = self.emb(x)
         enc_output = self.enc(enc_emb)
+
         # auto regressive
-        dec_emb = self.dec_emb(y)
+        dec_emb = self.emb(y)
         dec_output = self.dec(dec_emb, enc_output, mask=1)
         dec_output = self.criterion(dec_output) # (bs, seq_len, vocab_size)
+
         # decoding
-        return torch.argmax(dec_output, dim=-1)
+        output = torch.argmax(dec_output, dim=-1)
+        return output[:, -1].unsqueeze(1)
 
 def get_loss(labels, logits):
     loss_fn = nn.CrossEntropyLoss(ignore_index=0)

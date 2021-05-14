@@ -75,7 +75,6 @@ class Trainer:
         else:
             self.writer.add_scalar("valid/loss", log, step)
 
-
     def train_epoch(self, model, epoch, global_step=None, save_path=None):
         if self.type == "train":
             model.train()
@@ -92,25 +91,27 @@ class Trainer:
             loss = model(encoder_input, decoder_input)
             # model(encoder_input, decoder_input)
             if self.type == 'train':
-
                 if self.global_step % self.ckpnt_step == 0:
                     torch.save({"epoch": epoch,
                                 "model_state_dict": model.state_dict(),
-                                "optimizer_stata_dict": self.optimizer.state_dict()}, save_path+"ckpnt_{}".format(epoch))
+                                "optimizer_stata_dict": self.optimizer.state_dict()},
+                               save_path + "ckpnt_{}".format(self.global_step//self.ckpnt_step))
 
+                self.log_writer(loss.data, self.global_step)
                 self.optim_process(model, self.global_step, loss)
                 self.global_step += 1
+
             else:
                 ## predicted value visualization
                 ## need check
                 bs, input_length = encoder_input.size()
-                decode_token = torch.ones(bs).unsqueeze(1) # (bs, 1) -> <bos> token id = 1
+                decode_token = torch.ones(bs).unsqueeze(1)  # (bs, 1) -> <bos> token id = 1
                 max_length = input_length + 50
                 for i in range(len(max_length)):
                     decode_output = model.search(encoder_input, decode_token)
                     print(decode_output)
                     print("decode output size {}".format(decode_output.size()))
-                    decode_token = torch.cat((decode_token, decode_output),dim=-1)
+                    decode_token = torch.cat((decode_token, decode_output), dim=-1)
                     print("decode token size {}".format(decode_token.size()))
                     print(decode_token)
 
@@ -126,16 +127,11 @@ class Trainer:
         loss.backward()
         self.train_loss += loss.data
         if optim_step % self.accum == 0:
-
             torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.train.clip)
             self.optimizer.step()
             self.scheduler.step()
             self.optimizer.zero_grad()
-            self.log_writer(self.train_loss, self.global_step)
             self.train_loss = 0
-            
-            
-            
 
 # acummulation_step = 25
 # batch_size = 50
