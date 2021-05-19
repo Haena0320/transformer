@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 ## data_loader
-def get_data_loader(data_list, batch_size, shuffle=True,num_workers=10,  drop_last=True):
+def get_data_loader(data_list, batch_size, shuffle=False,num_workers=10,  drop_last=True):
     dataset = Make_Dataset(data_list)
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, drop_last=drop_last, collate_fn=make_padding)
     return data_loader
@@ -36,6 +36,7 @@ class Make_Dataset(Dataset):
 
     def __getitem__(self, idx):
         return {"encoder":torch.LongTensor(self.encoder_input[idx]), "decoder":torch.LongTensor(self.decoder_input[idx])}
+
 
 # path = ["/hdd/user15/workspace/Transformer/data/prepro/en_de/test.en.txt","/hdd/user15/workspace/Transformer/data/prepro/en_de/test.de.txt"]
 # dataloader= get_data_loader(path, 10)

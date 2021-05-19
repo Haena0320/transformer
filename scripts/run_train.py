@@ -1,5 +1,4 @@
 import sys, os
-
 sys.path.append(os.getcwd())
 import argparse
 from torch.utils.tensorboard import SummaryWriter
@@ -28,10 +27,10 @@ parser.add_argument("--h_units", type=int, default=128)
 parser.add_argument("--dropout", type=float, default=0.5)
 parser.add_argument("--optim", type=str, default="adam")
 parser.add_argument("--g_norm", type=str, default=5)
-parser.add_argument("--learning_rate", type=float, default=1e-3)
+parser.add_argument("--learning_rate", type=float,default=1e-3)
 
 parser.add_argument("--use_earlystop", type=int, default=1)
-parser.add_argument('--total_step', type=int, default=100000)
+parser.add_argument('--epochs', type=int, default=5)
 
 args = parser.parse_args()
 config = load_config(args.config)
@@ -54,41 +53,54 @@ if not os.path.exists(args.log):
     os.mkdir(args.log)
     os.mkdir(tb_loc)
     os.mkdir(ckpnt_loc)
-
+    
 writer = SummaryWriter(tb_loc)
 
-from src.model_2 import TransformerModel as model
+from src.model import Transformer as model
 import src.train as train
 import src.data_load as data
 
 # data loader
-data_info = config.data_info[args.dataset]
-train_list = [data_info.prepro_tr_en, data_info.prepro_tr_de]
-test_list = [data_info.prepro_te_en, data_info.prepro_te_de]
-train_loader  = data.get_data_loader(train_list, config.train.batch_size, False, 10, True)
-test_loader = data.get_data_loader(test_list, config.train.batch_size, False, 10, True)
+train_loader  = data.get_data_loader(data_list, config.train.batch_size, False, 10, True)
+valid_loader = data.get_data_loader(data_list, config.train.batch_size, False, 10, True)
+test_loader = data.get_data_loader(data_list, config.train.batch_size, False, 10, True)
 
-print("dataset iteration num : train {} | test {}".format(len(train_loader), len(test_loader)))
+print("dataset iteration num : train {} | valid {} | test {}".format(len(train_loader), len(valid_loader), len(test_loader)))
+
 # model load
-model = model(config, args, device)
+model = model(config, args)
 
 # trainer load
 trainer = train.get_trainer(config, args,device, train_loader, writer, "train")
+dev_trainer = train.get_trainer(config, args,device, dev_loader, writer, "dev")
 test_loader = train.get_trainer(config, args,device, test_loader, writer, "test")
 
 optimizer = train.get_optimizer(model, args.optim)
-schedular = train.get_lr_schedular(optimizer, config)
+schedular = train.get_lr_schedular(optimizer)
 
 trainer.init_optimizer(optimizer)
 trainer.init_schedular(schedular)
 
-save_path = "/user15/workspace/Transformer/log/0.001/ckpnt/"
-total_epoch = args.total_step*config.train.accumulation_step // len(train_loader)
-print("total epoch {}".format(total_epoch))
-for epoch in tqdm(range(1, total_epoch+1)):
-    trainer.train_epoch(model, epoch, save_path=save_path)
-print('train finished...')
+early_stop_loss = []
+total_epoch = args.epochs * 100
+for epoch in tqdm(range(1, args.epochs+1)):
+    trainer.train_epoch(model, epoch)
+    valid_loss = dev_trainer.train_epoch(model, epoch, trainer.global_step)
+    early_stop_loss.extend(valid_loss)
 
+    if args.use_earlystop and early_stop_loss[-2] < early_stop_loss[-1]:
+        break
+    ### torch model, param, save
+
+    train_eval = trainer.evaluator
+    valid_eval = dev_trainer.evaluator
+    print("epoch : {} | train_eval : {} | valid_eval : {}".format(epoch, train_eval, valid_eval))
+
+
+print('train finished...')
+# test evaluation
+
+print("finished !! ")
 
     
 
