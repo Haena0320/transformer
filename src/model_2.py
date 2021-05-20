@@ -20,7 +20,7 @@ class WordEncoding(nn.Module):
         return self.embedding(x)
 
 class PositionEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000, device=None):
+    def __init__(self, d_model, max_len=100, device=None):
         super(PositionEncoding, self).__init__()
         self.device=device
         self.position_emb = torch.zeros(max_len, d_model)
@@ -41,23 +41,26 @@ class ScaledDotProduct(nn.Module):
         self.dropout= dropout
         self.device = device
 
-    def forward(self, query, key, value, attn_mask=None):
+    def forward(self, query, key, value, attn_mask=None, decod_mask=None):
         # (bs * h, seq_q, dimension/h) (128, 56, 64)
         # (bs * h, seq_k, dimension/h)
         # (bs * h, seq_v, dimension/h)
         bs_h, K, dimension_k = key.size()
         _, Q, _ = query.size()
-        attn_output = torch.bmm(query, key.transpose(1,2))/dimension_k**0.5 # attn_output : (bs, seq_q, seq_k)
-        if attn_mask is not None:
-            mask = torch.ones(Q,K)
+        attn_output = torch.bmm(query, key.transpose(1,2))/dimension_k**0.5 # attn_output : (bs*h, seq_q, seq_k)
+        # padd mask
+        attn_mask =attn_mask.unsqueeze(1).repeat(1,Q,1).repeat(8,1,1) # (bs*h, seq_q, seq_k)
+        attn_output = (1-attn_mask)*attn_output+attn_mask*(-2**32)
+
+        if decod_mask is not None: # decoder mask
+            mask = torch.ones(Q,K, device="cuda:0")
             mask = 1-torch.tril(mask, diagonal=0)
-            mask = mask*(-2**32)
-            mask = mask.repeat(bs_h, 1, 1)
+            mask = mask.repeat(bs_h, 1,1)
+            a_mask = mask * (-2 ** 32)
             device = torch.device("cuda:0")
-            attn_output *=  mask.to(device)
-            #attn_output += mask
+            attn_output =  a_mask.to(device)+(1-mask)*attn_output
+
         attn_output = F.softmax(attn_output, dim=-1)
-        print(attn_output[0,:,:])
         attn_output = F.dropout(attn_output, p=self.dropout)
         output = torch.bmm(attn_output,value) # output : (bs, seq_q, d_model)
 
@@ -189,12 +192,12 @@ class DecoderLayer(nn.Module):
 
     def forward(self, input, enc, input_mask=None):
         query, key, value = self.attn_in_1(input, input, input)
-        attn_out1 = self.scaled_dot_1(query, key, value, input_mask) # input_mask : (bs, seq_q, seq_k)
+        attn_out1 = self.scaled_dot_1(query, key, value, input_mask, decod_mask=1) # input_mask : (bs, seq_q, seq_k)
         out1 = self.attn_out_1(attn_out1)
         out = self.norm1(input + self.dropout1(out1))
 
         query, key, value = self.attn_in_2(out,enc,enc)
-        attn_out2 = self.scaled_dot_2(query, key, value, None)
+        attn_out2 = self.scaled_dot_2(query, key, value, input_mask)
         out2 = self.attn_out_2(attn_out2)
         out = self.norm2(out+self.dropout2(out2))
 
@@ -282,12 +285,14 @@ class TransformerModel(nn.Module):
         # <eos> token 제거
         dec = y * (1 - y.eq(2.).float())
         dec = dec[:, :-1].long()
+        # attn mask
+        mask = x.eq(0).float()
 
         # forward
         enc_emb = self.emb(x)
-        enc_output = self.enc(enc_emb)
+        enc_output = self.enc(enc_emb, mask=mask)
         dec_emb = self.emb(dec)
-        dec_output = self.dec(dec_emb, enc_output, mask=1)
+        dec_output = self.dec(dec_emb, enc_output, mask=mask)
         dec_output = self.criterion(dec_output)
         loss = get_loss(y, dec_output)
         return loss

@@ -10,10 +10,13 @@ def get_data_loader(data_list, batch_size, shuffle=False,num_workers=10,  drop_l
 def make_padding(samples):
     def padd(samples):
         length = [len(s) for s in samples]
-        max_length = max(length)
+        max_length = 50
         batch = torch.zeros(len(length), max_length).to(torch.long)
         for idx, sample in enumerate(samples):
-            batch[idx, :length[idx]] = torch.LongTensor(sample)
+            if length[idx]< max_length:
+                batch[idx, :length[idx]] = torch.LongTensor(sample)
+            else:
+                batch[idx, :max_length] = torch.LongTensor(sample[:max_length])
         return torch.LongTensor(batch)
     encoder = [sample["encoder"] for sample in samples]
     decoder = [sample["decoder"] for sample in samples]

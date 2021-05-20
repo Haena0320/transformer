@@ -7,6 +7,7 @@ import time
 from tqdm import tqdm
 from torch.cuda.amp import autocast
 from sacremoses import MosesDetokenizer
+import sacrebleu
 
 
 ## train_loader
@@ -18,7 +19,7 @@ def get_optimizer(model, args_optim):
     if args_optim == "adam":
         return torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-09)
     if args_optim == 'adamW':
-        return torch.optim.AdamW(params, lr=0, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
+        return torch.optim.AdamW(model.parameters(), lr=0, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
 
 
 def get_lr_schedular(optimizer, config):
@@ -85,9 +86,10 @@ class Trainer:
 
         else:
             model.eval()
+            total_bleu = list()
 
         model.to(self.device)
-        loss_save = list()
+
 
         for data in tqdm(self.data_loader, desc="Epoch : {}".format(epoch)):
             with autocast():
@@ -100,7 +102,7 @@ class Trainer:
                         torch.save({"epoch": epoch,
                                     "model_state_dict": model.state_dict(),
                                     "optimizer_stata_dict": self.optimizer.state_dict()},
-                                   save_path + "ckpnt_{}".format(self.global_step//self.ckpnt_step))
+                                   save_path + "/ckpnt_{}".format(epoch))
 
                     self.log_writer(loss.data, self.global_step)
                     self.optim_process(model, self.global_step, loss)
@@ -108,7 +110,7 @@ class Trainer:
 
                 else:
                     bs, input_length = encoder_input.size()
-                    sos = torch.ones(bs).unsqueeze(1)  # (bs, 1) -> <bos> token id = 1
+                    sos = torch.ones(bs, dtype=int, device="cuda:0").unsqueeze(1)  # (bs, 1) -> <bos> token id = 1
                     max_length = input_length + 50
 
                     for i in range(max_length):
@@ -135,8 +137,8 @@ class Trainer:
                     assert len(pred) == len(truth)
                     bleu = [sacrebleu.corpus_bleu(pred[i], truth[i]).score for i in range(len(pred))]
                     total_bleu.append(sum(bleu) / len(bleu))
-
-        print("total_bleu per epoch : {}".format(sum(total_bleu) / len(total_bleu)))
+        if self.type != "train":
+            print("total_bleu per epoch : {}".format(sum(total_bleu) / len(total_bleu)))
 
 
 

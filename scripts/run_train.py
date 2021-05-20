@@ -26,7 +26,7 @@ parser.add_argument('--layer_size', type=int, default=2)
 parser.add_argument("--embedding_dim", type=int, default=300)
 parser.add_argument("--h_units", type=int, default=128)
 parser.add_argument("--dropout", type=float, default=0.5)
-parser.add_argument("--optim", type=str, default="adam")
+parser.add_argument("--optim", type=str, default="adamW")
 parser.add_argument("--g_norm", type=str, default=5)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
@@ -65,8 +65,7 @@ import src.data_load as data
 
 # data loader
 data_info = config.data_info[args.dataset]
-#train_list = [data_info.prepro_tr_en, data_info.prepro_tr_de]
-train_list = [data_info.prepro_te_en, data_info.prepro_te_de]
+train_list = [data_info.prepro_tr_en, data_info.prepro_tr_de]
 test_list = [data_info.prepro_te_en, data_info.prepro_te_de]
 train_loader  = data.get_data_loader(train_list, config.train.batch_size, False, 10, True)
 test_loader = data.get_data_loader(test_list, config.train.batch_size, False, 10, True)
@@ -87,7 +86,7 @@ trainer.init_schedular(schedular)
 
 ## decoder load
 sp = spm.SentencePieceProcessor()
-sp.Load(data.model_name+".model")
+sp.Load(data_info.model_name+".model")
 
 total_epoch = args.total_step*config.train.accumulation_step // len(train_loader)
 print("total epoch {}".format(total_epoch))
