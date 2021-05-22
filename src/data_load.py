@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 ## data_loader
-def get_data_loader(data_list, batch_size, shuffle=False,num_workers=10,  drop_last=True):
+def get_data_loader(data_list, batch_size, shuffle=True,num_workers=10,  drop_last=True):
     dataset = Make_Dataset(data_list)
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, drop_last=drop_last, collate_fn=make_padding)
     return data_loader
@@ -10,13 +10,13 @@ def get_data_loader(data_list, batch_size, shuffle=False,num_workers=10,  drop_l
 def make_padding(samples):
     def padd(samples):
         length = [len(s) for s in samples]
-        max_length = 50
+        max_length = 128
         batch = torch.zeros(len(length), max_length).to(torch.long)
         for idx, sample in enumerate(samples):
             if length[idx]< max_length:
                 batch[idx, :length[idx]] = torch.LongTensor(sample)
             else:
-                batch[idx, :max_length] = torch.LongTensor(sample[:max_length])
+                batch[idx, :max_length-1] = torch.LongTensor(sample[:max_length-1]+torch.LongTensor([2]))
         return torch.LongTensor(batch)
     encoder = [sample["encoder"] for sample in samples]
     decoder = [sample["decoder"] for sample in samples]

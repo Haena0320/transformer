@@ -5,7 +5,7 @@ from src.model_2 import *
 import torch.optim as optim
 import time
 from tqdm import tqdm
-from torch.cuda.amp import autocast
+from torch.cuda import amp
 from sacremoses import MosesDetokenizer
 import sacrebleu
 
@@ -61,8 +61,10 @@ class Trainer:
         self.type = type
         self.accum = self.config.train.accumulation_step
         self.ckpnt_step = self.config.train.ckpnt_step
+        self.gradscaler = amp.GradScaler()
         self.global_step = 1
-        self.train_loss = 0
+        self.step = 0
+        self.train_loss = list()
         if self.type != "train":
             self.md = MosesDetokenizer(lang="du")
 
@@ -92,9 +94,12 @@ class Trainer:
 
 
         for data in tqdm(self.data_loader, desc="Epoch : {}".format(epoch)):
-            with autocast():
+            with amp.autocast():
                 encoder_input = data["encoder"][:, 1:].to(self.device)  # 16, 99
                 decoder_input = data["decoder"].to(self.device)  # 16, 100
+                print(sum(sum(1-encoder_input.eq(0).float())))
+                print(sum(sum(1-decoder_input.eq(0).float())))
+
                 loss = model(encoder_input, decoder_input)
                 # model(encoder_input, decoder_input)
                 if self.type == 'train':
@@ -104,9 +109,9 @@ class Trainer:
                                     "optimizer_stata_dict": self.optimizer.state_dict()},
                                    save_path + "/ckpnt_{}".format(epoch))
 
-                    self.log_writer(loss.data, self.global_step)
-                    self.optim_process(model, self.global_step, loss)
-                    self.global_step += 1
+                    self.optim_process(model, self.step, loss)
+                    self.step += 1
+
 
                 else:
                     bs, input_length = encoder_input.size()
@@ -141,15 +146,15 @@ class Trainer:
             print("total_bleu per epoch : {}".format(sum(total_bleu) / len(total_bleu)))
 
 
-
-
     def optim_process(self, model, optim_step, loss):
         loss /= self.accum
-        loss.backward()
-        self.train_loss += loss.data
+        self.gradscaler.scale(loss).backward()
+        self.train_loss.append(loss.data)
         if optim_step % self.accum == 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.train.clip)
-            self.optimizer.step()
+            self.gradscaler.step(self.optimizer)
+            self.gradscaler.update()
             self.scheduler.step()
             self.optimizer.zero_grad()
-            self.train_loss = 0
+            self.log_writer(loss.data*self.accum, self.global_step)
+            self.global_step += 1

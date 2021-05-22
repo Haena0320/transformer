@@ -1,4 +1,4 @@
-{"train": {"batch_size": 16, "max_lr": 0.001, "clip": 5, "warmup": 4000, "accumulation_step": 50, "max_len": 128, "ckpnt_step":10000},
+{"train": {"batch_size": 80, "max_lr": 0.001, "clip": 1, "warmup": 4000, "accumulation_step": 100, "max_len": 128, "ckpnt_step":10000},
 "model": {"max_sen_len": 50, "min_cnt": 20, "h_units": 512, "n_blocks": 6, "epochs": 20, "n_head": 8, "d_rate": 0.1, "eval_epoch": 20, "use_pretrain": "False",
           "dim_feedforward": 2048},
 "data_info": {"en_de": {"raw_tr_total":"./data/raw/en_de/train/train.sum.txt",

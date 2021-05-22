@@ -10,7 +10,7 @@ class WordEncoding(nn.Module):
         super(WordEncoding, self).__init__()
         self.d_model = d_model
         self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(self.vocab_size, self.d_model)
+        self.embedding = nn.Embedding(self.vocab_size, self.d_model, padding_idx=0)
 
     def init_weights(self):
         d = self.d_model**(-0.5)
@@ -20,19 +20,20 @@ class WordEncoding(nn.Module):
         return self.embedding(x)
 
 class PositionEncoding(nn.Module):
-    def __init__(self, d_model, max_len=100, device=None):
+    def __init__(self, d_model, max_len=1000, device=None):
         super(PositionEncoding, self).__init__()
         self.device=device
-        self.position_emb = torch.zeros(max_len, d_model)
-        position = torch.arange(0., max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * - (math.log(1e4) / d_model))
-        self.position_emb[:, 0::2] = torch.sin(position*div_term)
-        self.position_emb[:, 1::2] = torch.cos(position*div_term)
+        self.d_model = d_model
 
     def forward(self, inputs):
+        bs, seq = inputs.size()
         # batch size, sequence
-        outputs = self.position_emb[:inputs.size(1), :]
-        outputs = outputs.unsqueeze(0).repeat(inputs.size(0), 1, 1).to(self.device)
+        self.position_emb = torch.zeros(seq, self.d_model, requires_grad=False)
+        position = torch.arange(0., seq).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.d_model, 2) * - (math.log(1e4) / self.d_model))
+        self.position_emb[:, 0::2] = torch.sin(position * div_term)
+        self.position_emb[:, 1::2] = torch.cos(position * div_term)
+        outputs = self.position_emb.unsqueeze(0).repeat(inputs.size(0), 1, 1).to(self.device)
         return outputs
 
 class ScaledDotProduct(nn.Module):
@@ -45,20 +46,23 @@ class ScaledDotProduct(nn.Module):
         # (bs * h, seq_q, dimension/h) (128, 56, 64)
         # (bs * h, seq_k, dimension/h)
         # (bs * h, seq_v, dimension/h)
+        # attn_mask (bs, seq_k)
         bs_h, K, dimension_k = key.size()
         _, Q, _ = query.size()
         attn_output = torch.bmm(query, key.transpose(1,2))/dimension_k**0.5 # attn_output : (bs*h, seq_q, seq_k)
         # padd mask
-        attn_mask =attn_mask.unsqueeze(1).repeat(1,Q,1).repeat(8,1,1) # (bs*h, seq_q, seq_k)
-        attn_output = (1-attn_mask)*attn_output+attn_mask*(-2**32)
+        bs, _ = attn_mask.size()
+        h = bs_h // bs
+        assert bs_h == h * bs
+        attn_mask = attn_mask.eq(0).float().repeat(h,1).unsqueeze(1).repeat(1,Q,1).contiguous() #(bs*h,Q,seq_k)
+        attn_output += attn_mask*(-1e-10)
 
         if decod_mask is not None: # decoder mask
-            mask = torch.ones(Q,K, device="cuda:0")
+            mask = torch.ones(Q,K, device="cuda:0",requires_grad=False)
             mask = 1-torch.tril(mask, diagonal=0)
-            mask = mask.repeat(bs_h, 1,1)
-            a_mask = mask * (-2 ** 32)
-            device = torch.device("cuda:0")
-            attn_output =  a_mask.to(device)+(1-mask)*attn_output
+            mask = mask.unsqueeze(0).repeat(bs_h,1,1).contiguous()
+            a_mask = mask * (-1e-10)
+            attn_output = attn_output + a_mask.to(torch.device("cuda:0"))
 
         attn_output = F.softmax(attn_output, dim=-1)
         attn_output = F.dropout(attn_output, p=self.dropout)
@@ -109,8 +113,9 @@ class MultiheadAttention_Out(nn.Module):
         bs = bs_h // self.num_heads
         assert bs * self.num_heads == bs_h
 
-        attn_output = torch.cat(torch.chunk(attn_output,self.num_heads, dim=0), dim=2) # (bs,seq_q,embedding_dim)
-        return self.linear(attn_output)
+        attn_output = torch.cat(torch.chunk(attn_output,self.num_heads, dim=0), dim=2).contiguous() # (bs,seq_q,embedding_dim)
+        attn_output = self.linear(attn_output)
+        return attn_output
 
 class EncoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, dim_feedforward=2048, dropout=0.1, activation="relu", device=None):
@@ -139,9 +144,9 @@ class EncoderLayer(nn.Module):
         self.norm2.bias.data.zero_()
         self.norm2.weight.data.fill_(1.0)
 
-    def forward(self, input, input_mask=None):
+    def forward(self, input, mask=None):
         query, key, value = self.attn_in(input, input, input)
-        attn_out = self.scaled_dot(query, key, value, input_mask)
+        attn_out = self.scaled_dot(query, key, value, attn_mask=mask)
         out1 = self.attn_out(attn_out)
         out = self.norm1(input+self.dropout1(out1))
         out2= self.linear2(self.dropout(self.activation(self.linear1(out))))
@@ -190,14 +195,14 @@ class DecoderLayer(nn.Module):
         self.norm3.bias.data.zero_()
         self.norm3.weight.data.fill_(1.0)
 
-    def forward(self, input, enc, input_mask=None):
+    def forward(self, input, enc, mask=None):
         query, key, value = self.attn_in_1(input, input, input)
-        attn_out1 = self.scaled_dot_1(query, key, value, input_mask, decod_mask=1) # input_mask : (bs, seq_q, seq_k)
+        attn_out1 = self.scaled_dot_1(query, key, value, attn_mask=mask[0], decod_mask=1) # input_mask : (bs, seq_q, seq_k)
         out1 = self.attn_out_1(attn_out1)
         out = self.norm1(input + self.dropout1(out1))
 
         query, key, value = self.attn_in_2(out,enc,enc)
-        attn_out2 = self.scaled_dot_2(query, key, value, input_mask)
+        attn_out2 = self.scaled_dot_2(query, key, value, attn_mask=mask[1])
         out2 = self.attn_out_2(attn_out2)
         out = self.norm2(out+self.dropout2(out2))
 
@@ -218,7 +223,7 @@ class TransformerEncoder(nn.Module):
 
     def forward(self, input, mask=None):
         for layer in self.layers:
-            output = layer(input, input_mask=mask)
+            output = layer(input, mask=mask)
 
         return output
 
@@ -236,7 +241,7 @@ class TransformerDecoder(nn.Module):
 
     def forward(self, input,enc, mask=None):
         for layer in self.layers:
-            output = layer(input, enc, input_mask=mask)
+            output = layer(input, enc, mask=mask)
 
         return output
 
@@ -249,7 +254,6 @@ class Embedding(nn.Module):
         self.dropout = Dropout(p=0.1)
 
     def init_weights(self):
-        self.embed.weight.data.normal_(mean=0.0, std=0.02)
         self.word_embed.init_weights()
 
     def forward(self, input):
@@ -282,18 +286,22 @@ class TransformerModel(nn.Module):
 
 
     def forward(self, x, y):
+
         # <eos> token 제거
         dec = y * (1 - y.eq(2.).float())
         dec = dec[:, :-1].long()
-        # attn mask
-        mask = x.eq(0).float()
 
         # forward
         enc_emb = self.emb(x)
-        enc_output = self.enc(enc_emb, mask=mask)
+
+        enc_output = self.enc(enc_emb, mask=x)
+
         dec_emb = self.emb(dec)
-        dec_output = self.dec(dec_emb, enc_output, mask=mask)
+
+        dec_output = self.dec(dec_emb, enc_output, mask=[dec, x])
+
         dec_output = self.criterion(dec_output)
+    
         loss = get_loss(y, dec_output)
         return loss
 
@@ -301,11 +309,11 @@ class TransformerModel(nn.Module):
 
         # encoding forward
         enc_emb = self.emb(x)
-        enc_output = self.enc(enc_emb)
+        enc_output = self.enc(enc_emb, mask=x)
 
         # auto regressive
         dec_emb = self.emb(y)
-        dec_output = self.dec(dec_emb, enc_output, mask=1)
+        dec_output = self.dec(dec_emb, enc_output, mask=[y, x])
         dec_output = self.criterion(dec_output) # (bs, seq_len, vocab_size)
 
         # decoding
