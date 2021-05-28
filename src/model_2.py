@@ -4,17 +4,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import ModuleList, Linear, Dropout, LayerNorm
 import math
+import numpy as np
 
 class WordEncoding(nn.Module):
-    def __init__(self, d_model, vocab_size):
+    def __init__(self, embed_weights, d_model):
         super(WordEncoding, self).__init__()
+        self.embedding = nn.Embedding.from_pretrained(embed_weights, freeze=False, padding_idx=0)
         self.d_model = d_model
-        self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(self.vocab_size, self.d_model, padding_idx=0)
-
-    def init_weights(self):
-        d = self.d_model**(-0.5)
-        self.embedding.weight.data.uniform_(-d, d)
 
     def forward(self,x):
         return self.embedding(x)
@@ -55,13 +51,13 @@ class ScaledDotProduct(nn.Module):
         h = bs_h // bs
         assert bs_h == h * bs
         attn_mask = attn_mask.eq(0).float().repeat(h,1).unsqueeze(1).repeat(1,Q,1).contiguous() #(bs*h,Q,seq_k)
-        attn_output += attn_mask*(-1e-10)
+        attn_output += attn_mask*(-1e10)
 
         if decod_mask is not None: # decoder mask
             mask = torch.ones(Q,K, device="cuda:0",requires_grad=False)
             mask = 1-torch.tril(mask, diagonal=0)
             mask = mask.unsqueeze(0).repeat(bs_h,1,1).contiguous()
-            a_mask = mask * (-1e-10)
+            a_mask = mask * (-1e10)
             attn_output = attn_output + a_mask.to(torch.device("cuda:0"))
 
         attn_output = F.softmax(attn_output, dim=-1)
@@ -75,14 +71,14 @@ class MultiheadAttention_In(nn.Module):
     def __init__(self, d_model, num_heads):
         super(MultiheadAttention_In, self).__init__()
         self.num_heads = num_heads
-        self.fc_q = nn.Linear(d_model, d_model)
-        self.fc_k = nn.Linear(d_model, d_model)
-        self.fc_v = nn.Linear(d_model, d_model)
+        self.fc_q = nn.Linear(d_model, d_model, bias=False)
+        self.fc_k = nn.Linear(d_model, d_model, bias=False)
+        self.fc_v = nn.Linear(d_model, d_model, bias=False)
 
     def init_weight(self):
-        self.fc_q = self.fc_q.weight.data.normal_(mean=0.0, std=0.02)
-        self.fc_k = self.fc_k.weight.data.normal_(mean=0.0, std=0.02)
-        self.fc_v = self.fc_v.weight.data.normal_(mean=0.0, std=0.02)
+        nn.init.xavier_uniform_(self.fc_q.weight.data)
+        nn.init.xavier_uniform_(self.fc_k.weight.data)
+        nn.init.xavier_uniform_(self.fc_v.weight.data)
 
     def forward(self, query, key, value): # (bs, seq, embedding_dim)
         bs, seq, d_model = query.size()
@@ -103,10 +99,10 @@ class MultiheadAttention_Out(nn.Module):
         super(MultiheadAttention_Out, self).__init__()
         self.d_model = d_model
         self.num_heads = num_heads
-        self.linear = nn.Linear(d_model, d_model)
+        self.linear = nn.Linear(d_model, d_model, bias=False)
 
     def init_weights(self):
-        self.linear.weight.data.normal_(mean=0.0, std=0.02)
+        nn.init.xavier_uniform_(self.linear.weight.data)
 
     def forward(self, attn_output):
         bs_h,seq,_ = attn_output.size()
@@ -137,8 +133,10 @@ class EncoderLayer(nn.Module):
     def init_weights(self):
         self.attn_in.init_weights()
         self.attn_out.init_weights()
-        self.linear1.weight.data.normal_(mean=0.0, std=0.02)
-        self.linear2.weight.data.normal_(mean=0.0, std=0.02)
+        nn.init.xavier_uniform_(self.linear1.weight.data)
+        nn.init.xavier_uniform_(self.linear2.weight.data)
+        nn.init.constant_(self.linear1.bias, 0)
+        nn.init.constant_(self.linear2.bias, 0)
         self.norm1.bias.data.zero_()
         self.norm1.weight.data.fill_(1.0)
         self.norm2.bias.data.zero_()
@@ -186,8 +184,12 @@ class DecoderLayer(nn.Module):
         self.attn_out_1.init_weights()
         self.attn_in_2.init_weights()
         self.attn_out_2.init_weights()
-        self.linear1.weight.data.normal_(mean=0.0, std=0.02)
-        self.linear2.weight.data.normal_(mean=0.0, std=0.02)
+
+        nn.init.xavier_uniform_(self.linear1.weight.data)
+        nn.init.xavier_uniform_(self.linear2.weight.data)
+        nn.init.constant_(self.linear1.bias, 0)
+        nn.init.constant_(self.linear2.bias, 0)
+
         self.norm1.bias.data.zero_()
         self.norm1.weight.data.fill_(1.0)
         self.norm2.bias.data.zero_()
@@ -246,15 +248,12 @@ class TransformerDecoder(nn.Module):
         return output
 
 class Embedding(nn.Module):
-    def __init__(self,d_model, vocab, device):
+    def __init__(self,d_model, embed_weights, device):
         super(Embedding, self).__init__()
-        self.word_embed = WordEncoding(d_model, vocab).to(device)
+        self.word_embed = WordEncoding(embed_weights, d_model).to(device)
         self.posit_embed = PositionEncoding(d_model=d_model, device=device)
         self.norm = LayerNorm(d_model)
         self.dropout = Dropout(p=0.1)
-
-    def init_weights(self):
-        self.word_embed.init_weights()
 
     def forward(self, input):
         output = self.word_embed(input)+self.posit_embed(input)
@@ -271,42 +270,48 @@ class TransformerModel(nn.Module):
         dropout = config.model.d_rate
 
         super(TransformerModel, self).__init__()
-        self.emb = Embedding(d_model, vocab, device)
+        emb_weights = nn.parameter.Parameter(torch.empty(vocab,d_model), requires_grad=True)
+        nn.init.normal_(emb_weights, mean=0, std=d_model**(-0.5))
+
+        self.emb = Embedding(d_model, emb_weights, device)
         encoder = EncoderLayer(d_model, num_heads, dim_feedforward, dropout, device)
         self.enc = TransformerEncoder(encoder, num_layers, device)
 
         decoder = DecoderLayer(d_model, num_heads, dim_feedforward, dropout, device)
         self.dec = TransformerDecoder(decoder, num_layers, device)
-        self.criterion = nn.Linear(d_model, vocab)
+        self.criterion = nn.Linear(d_model, vocab, bias=False)
 
     def init_weights(self):
-        self.emb.init_weights()
         self.enc.init_weights()
         self.dec.init_weights()
-
+        self.criterion.weight_ = self.emb.T
 
     def forward(self, x, y):
+        """
+        :param x: (bs, max_length-1)
+        :param y: (bs, max_length)
+        :return: (bs, max_length-1)
+        """
 
         # <eos> token 제거
         dec = y * (1 - y.eq(2.).float())
-        dec = dec[:, :-1].long()
+        dec = dec[:, :-1].long() #(bs, max_length-1)
 
         # forward
         enc_emb = self.emb(x)
-
         enc_output = self.enc(enc_emb, mask=x)
-
         dec_emb = self.emb(dec)
-
         dec_output = self.dec(dec_emb, enc_output, mask=[dec, x])
-
         dec_output = self.criterion(dec_output)
-    
         loss = get_loss(y, dec_output)
         return loss
 
     def search(self, x, y):
-
+        """
+        :param x: (bs, max_length-1)
+        :param y: (bs, n)
+        :return: (bs, n)
+        """
         # encoding forward
         enc_emb = self.emb(x)
         enc_output = self.enc(enc_emb, mask=x)
@@ -314,19 +319,19 @@ class TransformerModel(nn.Module):
         # auto regressive
         dec_emb = self.emb(y)
         dec_output = self.dec(dec_emb, enc_output, mask=[y, x])
-        dec_output = self.criterion(dec_output) # (bs, seq_len, vocab_size)
+        dec_output = self.criterion(dec_output) # (bs, n, vocab_size)
 
         # decoding
-        output = torch.argmax(dec_output, dim=-1)
-        return output[:, -1].unsqueeze(1)
+        output = torch.argmax(dec_output, dim=-1) # bs, n
+        return output[:, -1]# bs, 1
 
 def get_loss(labels, logits):
     loss_fn = nn.CrossEntropyLoss(ignore_index=0)
     # <bos> token 제거
-    label = labels[:,1:].contiguous()
+    labels = labels[:,1:].contiguous()
     # loss 계산
-    B, S = label.size()
-    losses = loss_fn(logits.view(B*S, -1), label.view(-1))
+    B, S = labels.size()
+    losses = loss_fn(logits.view(B*S, -1), labels.view(-1))
     return losses
 
 

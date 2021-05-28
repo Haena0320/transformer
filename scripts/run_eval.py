@@ -15,10 +15,9 @@ parser.add_argument("--dataset", type=str, default="en_de")
 parser.add_argument("--model", type=str, default="base")
 parser.add_argument("--config", type=str, default="default")
 parser.add_argument("--gpu", type=str, default=None)
+parser.add_argument("--use_pretrained", type=int, default=0)
 parser.add_argument("--total_steps", type=int, default=10000)
 parser.add_argument("--eval_period", type=int, default=1000)
-
-parser.add_argument("--load", type=str, default="model.1.ckpt")
 
 args = parser.parse_args()
 assert args.model in ['base', "large"]
@@ -30,10 +29,11 @@ use_cuda = torch.cuda.is_available()
 device = torch.device("cuda:{}".format(args.gpu) if use_cuda and args.gpu is not None else "cpu")
 print("current device {}".format(device))
 ## model load -> valid -> best_ckpnt
-checkpoint = torch.load("./log/0.001/ckpnt/ckpnt_16", map_location=device)
+ckpnt_loc = "./log/0.001/ckpnt/"+"ckpnt_{}".format(args.use_pretrained)
+checkpoint = torch.load(ckpnt_loc, map_location=device)
 model  = TransformerModel(config, args, device)
 model.to(device)
-model.load_state_dict(checkpoint["model_state_dict"])
+model.load_state_dict(checkpoint["model_state_dict"], strict=False)
 model.eval()
 ## data load -> test data load
 data = config.data_info[args.dataset]
@@ -43,7 +43,7 @@ data_loader = get_data_loader(data_list, config.train.batch_size)
 # 1(sos) + token_id, token_id, token_id, + 2(eos)
 ## decoding
 
-## bleu score calculation
+# bleu score calculation
 sp = spm.SentencePieceProcessor()
 sp.Load("bye_pair_encoding.model")
 
@@ -51,29 +51,35 @@ pred = open("./eval/predict.txt", "w")
 truth = open("./eval/truth.txt", "w")
 
 for data_iter in tqdm(data_loader):
-    encoder_input = data_iter["encoder"].to(device)
-    decoder_input = data_iter["decoder"].to(device)
+    encoder_input = data_iter["encoder"][:,1:].to(device) #(16, 99)
+    decoder_input = data_iter["decoder"].to(device) #(16, 100)
 
-    sos = decoder_input[:,0]
-    sos = sos.unsqueeze(1)
+    sos = decoder_input[:,0] # bs 
+    sos = sos.unsqueeze(1) # (bs, 1)
 
-    bs, max_sent_len = decoder_input.size()
+    bs, max_sent_len = decoder_input.size() 
     max_sent_len += 50
 
-    generate_data = []
+    pred_token = torch.zeros(bs, max_sent_len)
     for i in range(max_sent_len):
-        y = model.search(encoder_input, sos)
-        sos = torch.cat([sos, y], dim=-1)
+        y = model.search(encoder_input, sos) # bs,
+        pred_token[:, i] = y
+        sos = torch.cat([sos, y.unsqueeze(1)], dim=-1)
 
-    tokens = sos.tolist()
-    for i, token in enumerate(tokens):
+    pred_token = pred_token.tolist()
+    for i, token in enumerate(pred_token):
         for j in range(len(token)):
             if token[j] == 2:
                 token = token[:j]
                 break
-
+        print("-----------------------------------------------------")
+        print(token)
+        print(len(token))
+        token = [int(t) for t in token]
         decode_tokens = sp.DecodeIds(token)
         decode_truth = sp.DecodeIds(decoder_input[i,:].tolist())
+        print(decode_tokens)
+        print(decode_truth)
         # write txt file
         pred.write(decode_tokens+"\n")
         truth.write(decode_truth+"\n")
@@ -95,8 +101,8 @@ pred = [md.detokenize(i.strip().split()) for i in pred]
 truth = [i.replace("\n", '') for i in t.readlines()]
 truth = [md.detokenize(i.strip().split()) for i in truth]
 
-print("sample 1st pred sentence:", pred[0])
-print("sample 1st truth sentence:", truth[0])
+print("sample 1st pred sentence:", pred[:10])
+print("sample 1st truth sentence:", truth[:10])
 
 assert len(pred) == len(truth)
 print(len(pred))
@@ -109,3 +115,4 @@ for i in range(len(pred)):
 
 print('-----------------------------------------------------------------------------------------------------------------')
 print("total bleu :{}".format(sum(total_bleu)/len(total_bleu)))
+

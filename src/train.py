@@ -14,7 +14,6 @@ import sacrebleu
 def get_trainer(config, args, device, data_loader, writer, type):
     return Trainer(config, args, device, data_loader, writer, type)
 
-
 def get_optimizer(model, args_optim):
     if args_optim == "adam":
         return torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-09)
@@ -43,7 +42,6 @@ class WarmupLinearshedular:
         for p in self.optimizer.param_groups:
             p["lr"] = rate
         self._rate = rate
-        self.optimizer.step()
 
     def rate(self, step=None):
         if step is None:
@@ -94,26 +92,26 @@ class Trainer:
 
 
         for data in tqdm(self.data_loader, desc="Epoch : {}".format(epoch)):
-            with amp.autocast():
-                encoder_input = data["encoder"][:, 1:].to(self.device)  # 16, 99
-                decoder_input = data["decoder"].to(self.device)  # 16, 100
-                print(sum(sum(1-encoder_input.eq(0).float())))
-                print(sum(sum(1-decoder_input.eq(0).float())))
+            #with amp.autocast():
+            encoder_input = data["encoder"][:, 1:].to(self.device)  # 16, 99
+            decoder_input = data["decoder"].to(self.device)  # 16, 100
 
-                loss = model(encoder_input, decoder_input)
-                # model(encoder_input, decoder_input)
-                if self.type == 'train':
-                    if self.global_step % self.ckpnt_step == 0:
-                        torch.save({"epoch": epoch,
-                                    "model_state_dict": model.state_dict(),
-                                    "optimizer_stata_dict": self.optimizer.state_dict()},
-                                   save_path + "/ckpnt_{}".format(epoch))
+            loss = model(encoder_input, decoder_input)
+            # model(encoder_input, decoder_input)
+            if self.type == 'train':
+                if self.global_step % self.ckpnt_step == 0:
+                    torch.save({"epoch": epoch,
+                                "model_state_dict": model.state_dict(),
+                                "optimizer_state_dict": self.optimizer.state_dict(),
+                                "lr_step":self.scheduler._step},
+                               save_path + "/ckpnt_{}".format(epoch))
 
-                    self.optim_process(model, self.step, loss)
-                    self.step += 1
+                self.optim_process(model, self.step, loss)
+                self.step += 1
 
 
-                else:
+            else:
+                with torch.no_grad():
                     bs, input_length = encoder_input.size()
                     sos = torch.ones(bs, dtype=int, device="cuda:0").unsqueeze(1)  # (bs, 1) -> <bos> token id = 1
                     max_length = input_length + 50
@@ -144,17 +142,21 @@ class Trainer:
                     total_bleu.append(sum(bleu) / len(bleu))
         if self.type != "train":
             print("total_bleu per epoch : {}".format(sum(total_bleu) / len(total_bleu)))
+        else:
+            return None
 
 
     def optim_process(self, model, optim_step, loss):
         loss /= self.accum
-        self.gradscaler.scale(loss).backward()
-        self.train_loss.append(loss.data)
+        #self.gradscaler.scale(loss).backward()
+        loss.backward()
         if optim_step % self.accum == 0:
+            #self.gradscaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.train.clip)
-            self.gradscaler.step(self.optimizer)
-            self.gradscaler.update()
+            # self.gradscaler.step(self.optimizer)
+            # self.gradscaler.update()
             self.scheduler.step()
+            self.optimizer.step()
             self.optimizer.zero_grad()
             self.log_writer(loss.data*self.accum, self.global_step)
             self.global_step += 1

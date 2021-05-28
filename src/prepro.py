@@ -5,26 +5,7 @@ from torchtext.vocab import Vocab
 import logging
 import numpy as np
 import sentencepiece as spm
-
-
-class Dataloader(Dataset):
-    def __init__(self, data, vocab):
-        self.data = data
-        self.vocab = vocab
-
-    def __getitem__(self, idx):
-        return self.data[i]
-
-    def __len__(self):
-        return len(self.data)
-
-    def __iter__(self):
-        for x in self.data:
-            yield x
-
-    def get_vocab(self):
-        return self.vocab
-
+import torch
 
 def encoding(input_file, vocab_size, vocab_path, model_name, model_type):
     pad = 0
@@ -42,20 +23,18 @@ def encoding(input_file, vocab_size, vocab_path, model_name, model_type):
     torch.save(word2idx, vocab_path)
 
 def data_prepro(input_path, save_path, model_path):
-    f = open(input_path)
+    f1 = open(input_path[0])
+    f2 = open(input_path[1])
     sp = spm.SentencePieceProcessor()
     sp.Load(model_path)
     sp.SetEncodeExtraOptions("bos:eos")
-    ids = [np.array(sp.EncodeAsIds(line)) for line in f.readlines()]
-    torch.save(ids, save_path)
+    ids1 = [np.array(sp.EncodeAsIds(line)) for line in f1.readlines()]
+    ids2 = [np.array(sp.EncodeAsIds(line)) for line in f2.readlines()]
+
+
+    print("english prepro dataset : {}".format(len(ids1)))
+    print("german prepro dataset : {}".format(len(ids2)))
+
+    torch.save(ids1, save_path[0])
+    torch.save(ids2, save_path[1])
     logging.info("data saved ! ")
-
-
-
-
-
-
-
-
-
-    

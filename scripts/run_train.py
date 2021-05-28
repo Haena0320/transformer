@@ -15,6 +15,7 @@ parser.add_argument("--mode", type=str, default=">____<")
 parser.add_argument("--log", type=str, default="loss")
 parser.add_argument("--config", type=str, default="default")
 parser.add_argument("--gpu", type=str, default=None)
+parser.add_argument("--use_pretrained", type=int, default=0)
 parser.add_argument("--dataset", type=str, default="en_de")
 parser.add_argument("--model", type=str, default="base")
 
@@ -68,30 +69,45 @@ data_info = config.data_info[args.dataset]
 train_list = [data_info.prepro_tr_en, data_info.prepro_tr_de]
 test_list = [data_info.prepro_te_en, data_info.prepro_te_de]
 train_loader  = data.get_data_loader(train_list, config.train.batch_size, False, 10, True)
-test_loader = data.get_data_loader(test_list, config.train.batch_size, False, 10, True)
 
-print("dataset iteration num : train {} | test {}".format(len(train_loader), len(test_loader)))
 # model load
 model = model(config, args, device)
 
 # trainer load
 trainer = train.get_trainer(config, args,device, train_loader, writer, "train")
-tester = train.get_trainer(config, args,device, test_loader, writer, "test")
 
-optimizer = train.get_optimizer(model, args.optim)
-schedular = train.get_lr_schedular(optimizer, config)
+if args.use_pretrained:
+    ck_path = oj(ckpnt_loc, "/ckpnt_{}".format(args.use_pretrained))
+    checkpoint = torch.load(ck_path, map_location=device)
+    model.load_state_dict(checkpoint.load_state_dict)
 
-trainer.init_optimizer(optimizer)
-trainer.init_schedular(schedular)
+    optimizer = train.get_optimizer(model, args.optim)
+    optimizer.load_state_dict(checkpoint.optimizer_stata_dict)
 
-## decoder load
-sp = spm.SentencePieceProcessor()
-sp.Load(data_info.model_name+".model")
+    schedular = train.get_lr_schedular(optimizer, config)
+    schedular._step = checkpoint.lr_step
 
-total_epoch = args.total_step*config.train.accumulation_step // len(train_loader)
-print("total epoch {}".format(total_epoch))
+    trainer.init_optimizer(optimizer)
+    trainer.init_schedular(schedular)
+
+    total_epoch = checkpoint.epoch
+
+    model.train()
+
+else:
+    optimizer = train.get_optimizer(model, args.optim)
+    schedular = train.get_lr_schedular(optimizer, config)
+
+    trainer.init_optimizer(optimizer)
+    trainer.init_schedular(schedular)
+
+    total_epoch = args.total_step * config.train.accumulation_step // len(train_loader)
+    total_epoch = max(total_epoch, 1)
+    print("total epoch {}".format(total_epoch))
 
 for epoch in tqdm(range(1, total_epoch+1)):
     trainer.train_epoch(model, epoch, save_path=ckpnt_loc)
-    tester.train_epoch(model, epoch, save_path=eval_loc, sp=sp)
 print('finished...')
+
+
+
