@@ -64,33 +64,44 @@ from src.model_2 import TransformerModel as model
 import src.train as train
 import src.data_load as data
 
+import sacrebleu
+from sacremoses import MosesDetokenizer
+md = MosesDetokenizer(lang="du")
+
+import sentencepiece as spm
+sp = spm.SentencePieceProcessor()
+sp.Load("bye_pair_encoding.model")
+
 # data loader
 data_info = config.data_info[args.dataset]
 train_list = [data_info.prepro_tr_en, data_info.prepro_tr_de]
 test_list = [data_info.prepro_te_en, data_info.prepro_te_de]
 train_loader  = data.get_data_loader(train_list, config.train.batch_size, False, 10, True)
+test_loader  = data.get_data_loader(test_list, config.train.batch_size, False, 10, True)
 
 # model load
 model = model(config, args, device)
-
+print(model)
 # trainer load
 trainer = train.get_trainer(config, args,device, train_loader, writer, "train")
+tester = train.get_trainer(config, args,device, test_loader, writer, "test")
 
 if args.use_pretrained:
-    ck_path = oj(ckpnt_loc, "/ckpnt_{}".format(args.use_pretrained))
+    #ck_path = oj(ckpnt_loc, "/ckpnt_{}".format(args.use_pretrained))
+    ck_path = "/data/user15/workspace/Transformer/log/0.001/ckpnt/ckpnt_1"
     checkpoint = torch.load(ck_path, map_location=device)
-    model.load_state_dict(checkpoint.load_state_dict)
-
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.to(device)
     optimizer = train.get_optimizer(model, args.optim)
-    optimizer.load_state_dict(checkpoint.optimizer_stata_dict)
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
     schedular = train.get_lr_schedular(optimizer, config)
-    schedular._step = checkpoint.lr_step
+    schedular._step = checkpoint["lr_step"]
 
     trainer.init_optimizer(optimizer)
     trainer.init_schedular(schedular)
 
-    total_epoch = checkpoint.epoch
+    total_epoch =18
 
     model.train()
 
@@ -107,7 +118,5 @@ else:
 
 for epoch in tqdm(range(1, total_epoch+1)):
     trainer.train_epoch(model, epoch, save_path=ckpnt_loc)
+    tester.train_epoch(model, epoch, save_path=ckpnt_loc, sp=sp, md=md)
 print('finished...')
-
-
-

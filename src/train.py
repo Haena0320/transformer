@@ -80,7 +80,7 @@ class Trainer:
         else:
             self.writer.add_scalar("valid/loss", log, step)
 
-    def train_epoch(self, model, epoch, save_path=None, sp=None):
+    def train_epoch(self, model, epoch, save_path=None, sp=None, md=None):
         if self.type == "train":
             model.train()
 
@@ -93,7 +93,7 @@ class Trainer:
 
         for data in tqdm(self.data_loader, desc="Epoch : {}".format(epoch)):
             #with amp.autocast():
-            encoder_input = data["encoder"][:, 1:].to(self.device)  # 16, 99
+            encoder_input = data["encoder"].to(self.device)  # 16, 100
             decoder_input = data["decoder"].to(self.device)  # 16, 100
 
             loss = model(encoder_input, decoder_input)
@@ -111,35 +111,36 @@ class Trainer:
 
 
             else:
-                with torch.no_grad():
-                    bs, input_length = encoder_input.size()
-                    sos = torch.ones(bs, dtype=int, device="cuda:0").unsqueeze(1)  # (bs, 1) -> <bos> token id = 1
-                    max_length = input_length + 50
+                sos = decoder_input[:, 0]  # bs
+                sos = sos.unsqueeze(1)  # (bs, 1)
 
-                    for i in range(max_length):
-                        y = model.search(encoder_input, sos)
-                        sos = torch.cat([sos, y], dim=-1)
+                bs, max_sent_len = decoder_input.size()
+                max_sent_len += 50
 
-                    pred = list()
-                    truth = list()
+                pred_token = torch.zeros(bs, max_sent_len)
+                for i in range(max_sent_len):
+                    y = model.search(encoder_input, sos)  # bs,
+                    pred_token[:, i] = y
+                    sos = torch.cat([sos, y.unsqueeze(1)], dim=-1)
 
-                    tokens = sos[:,1:].tolist()
-                    for i, token in enumerate(tokens):
-                        for j in range(len(token)):
-                            if token[j] == 2:
-                                token = token[:j]
-                                break
-                        de_token = sp.DecodeIds(token)
-                        de_truth = sp.DecodeIds(decoder_input[i,:].tolist())
-                        pred.append(de_token)
-                        truth.append(de_truth)
+                pred_token = pred_token.tolist()
+                for i, token in enumerate(pred_token):
+                    for j in range(len(token)):
+                        if token[j] == 2:
+                            token = token[:j]
+                            break
+                    print("-----------------------------------------------------")
+                    token = [int(t) for t in token]
+                    decode_tokens = sp.DecodeIds(token)
+                    decode_truth = sp.DecodeIds(decoder_input[i, :].tolist())
+                    print(decode_tokens)
+                    print(decode_truth)
+                    pred = md.detokenize(decode_tokens.strip().split())
+                    truth = md.detokenize(decode_truth.strip().split())
+                    bleu = sacrebleu.corpus_bleu(pred, truth)
+                    total_bleu.append(bleu.score)
+                    print("bleu {}".format(bleu.score))
 
-                    pred = [self.md.detokenize(i.strip().split()) for i in pred]
-                    truth = [self.md.detokenize(i.strip().split()) for i in truth]
-
-                    assert len(pred) == len(truth)
-                    bleu = [sacrebleu.corpus_bleu(pred[i], truth[i]).score for i in range(len(pred))]
-                    total_bleu.append(sum(bleu) / len(bleu))
         if self.type != "train":
             print("total_bleu per epoch : {}".format(sum(total_bleu) / len(total_bleu)))
         else:

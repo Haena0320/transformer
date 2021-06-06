@@ -44,23 +44,3 @@ class Make_Dataset(Dataset):
 
     def __getitem__(self, idx):
         return {"encoder":torch.LongTensor(self.encoder_input[idx]), "decoder":torch.LongTensor(self.decoder_input[idx])}
-
-
-# path = ["/data/user15/workspace/Transformer/data/prepro/en_de/test.en.txt","/data/user15/workspace/Transformer/data/prepro/en_de/test.de.txt"]
-#
-#
-#
-# dataloader= get_data_loader(path, 10)
-# len(dataloader)
-# for i in dataloader:
-#     print(i)
-
-
-
-
-
-
-
-
-
-

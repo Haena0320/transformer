@@ -50,7 +50,7 @@ class ScaledDotProduct(nn.Module):
         bs, _ = attn_mask.size()
         h = bs_h // bs
         assert bs_h == h * bs
-        attn_mask = attn_mask.eq(0).float().repeat(h,1).unsqueeze(1).repeat(1,Q,1).contiguous() #(bs*h,Q,seq_k)
+        attn_mask = attn_mask.eq(0).float().unsqueeze(1).repeat(1,Q,1).repeat(h,1,1).contiguous() #(bs*h,Q,seq_k)
         attn_output += attn_mask*(-1e10)
 
         if decod_mask is not None: # decoder mask
@@ -82,7 +82,7 @@ class MultiheadAttention_In(nn.Module):
 
     def forward(self, query, key, value): # (bs, seq, embedding_dim)
         bs, seq, d_model = query.size()
-        head_dim = d_model// self.num_heads
+        head_dim = d_model // self.num_heads
         assert head_dim * self.num_heads == d_model
         q = self.fc_q(query)
         q = torch.cat(torch.chunk(q, self.num_heads, dim=2), dim=0).contiguous()
@@ -147,7 +147,7 @@ class EncoderLayer(nn.Module):
         attn_out = self.scaled_dot(query, key, value, attn_mask=mask)
         out1 = self.attn_out(attn_out)
         out = self.norm1(input+self.dropout1(out1))
-        out2= self.linear2(self.dropout(self.activation(self.linear1(out))))
+        out2= self.linear2(self.activation(self.linear1(out)))
         out = self.norm2(out1+self.dropout2(out2))
         return out
 
@@ -208,7 +208,7 @@ class DecoderLayer(nn.Module):
         out2 = self.attn_out_2(attn_out2)
         out = self.norm2(out+self.dropout2(out2))
 
-        out3= self.linear2(self.dropout(self.activation(self.linear1(out))))
+        out3= self.linear2(self.activation(self.linear1(out)))
         out = self.norm3(out+self.dropout3(out3))
         return out
 
@@ -224,9 +224,9 @@ class TransformerEncoder(nn.Module):
             layer.init_weights()
 
     def forward(self, input, mask=None):
+        output = input
         for layer in self.layers:
-            output = layer(input, mask=mask)
-
+            output = layer(output, mask=mask)
         return output
 
 class TransformerDecoder(nn.Module):
@@ -242,9 +242,9 @@ class TransformerDecoder(nn.Module):
             layer.init_weights()
 
     def forward(self, input,enc, mask=None):
+        output = input
         for layer in self.layers:
             output = layer(input, enc, mask=mask)
-
         return output
 
 class Embedding(nn.Module):
@@ -252,12 +252,12 @@ class Embedding(nn.Module):
         super(Embedding, self).__init__()
         self.word_embed = WordEncoding(embed_weights, d_model).to(device)
         self.posit_embed = PositionEncoding(d_model=d_model, device=device)
-        self.norm = LayerNorm(d_model)
+        #self.norm = LayerNorm(d_model)
         self.dropout = Dropout(p=0.1)
 
     def forward(self, input):
         output = self.word_embed(input)+self.posit_embed(input)
-        return self.dropout(self.norm(output))
+        return self.dropout(output)
 
 
 class TransformerModel(nn.Module):
@@ -292,16 +292,11 @@ class TransformerModel(nn.Module):
         :param y: (bs, max_length)
         :return: (bs, max_length-1)
         """
-
-        # <eos> token 제거
-        dec = y * (1 - y.eq(2.).float())
-        dec = dec[:, :-1].long() #(bs, max_length-1)
-
         # forward
         enc_emb = self.emb(x)
         enc_output = self.enc(enc_emb, mask=x)
-        dec_emb = self.emb(dec)
-        dec_output = self.dec(dec_emb, enc_output, mask=[dec, x])
+        dec_emb = self.emb(y)
+        dec_output = self.dec(dec_emb, enc_output, mask=[y, x])
         dec_output = self.criterion(dec_output)
         loss = get_loss(y, dec_output)
         return loss
@@ -329,24 +324,8 @@ def get_loss(labels, logits):
     loss_fn = nn.CrossEntropyLoss(ignore_index=0)
     # <bos> token 제거
     labels = labels[:,1:].contiguous()
+    logits = logits[:, :-1].contiguous()
     # loss 계산
     B, S = labels.size()
     losses = loss_fn(logits.view(B*S, -1), labels.view(-1))
     return losses
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

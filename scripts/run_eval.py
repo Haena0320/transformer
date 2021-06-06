@@ -47,17 +47,19 @@ data_loader = get_data_loader(data_list, config.train.batch_size)
 sp = spm.SentencePieceProcessor()
 sp.Load("bye_pair_encoding.model")
 
-pred = open("./eval/predict.txt", "w")
-truth = open("./eval/truth.txt", "w")
+import sacrebleu
+from sacremoses import MosesDetokenizer
+md = MosesDetokenizer(lang="du")
+total_bleu = []
 
 for data_iter in tqdm(data_loader):
-    encoder_input = data_iter["encoder"][:,1:].to(device) #(16, 99)
+    encoder_input = data_iter["encoder"].to(device) #(16, 100)
     decoder_input = data_iter["decoder"].to(device) #(16, 100)
 
-    sos = decoder_input[:,0] # bs 
+    sos = decoder_input[:,0] # bs
     sos = sos.unsqueeze(1) # (bs, 1)
 
-    bs, max_sent_len = decoder_input.size() 
+    bs, max_sent_len = decoder_input.size()
     max_sent_len += 50
 
     pred_token = torch.zeros(bs, max_sent_len)
@@ -73,46 +75,19 @@ for data_iter in tqdm(data_loader):
                 token = token[:j]
                 break
         print("-----------------------------------------------------")
-        print(token)
-        print(len(token))
         token = [int(t) for t in token]
         decode_tokens = sp.DecodeIds(token)
         decode_truth = sp.DecodeIds(decoder_input[i,:].tolist())
         print(decode_tokens)
         print(decode_truth)
-        # write txt file
-        pred.write(decode_tokens+"\n")
-        truth.write(decode_truth+"\n")
-
-pred.close()
-truth.close()
-print("prediction finished..")
-############################################ blue score calculation ####################################################
-import sacrebleu
-from sacremoses import MosesDetokenizer
-md = MosesDetokenizer(lang="du")
-
-
-p = open("./eval/predict.txt", "r")
-t = open("./eval/truth.txt", "r")
-
-pred = [i.replace("\n", '') for i in p.readlines()]
-pred = [md.detokenize(i.strip().split()) for i in pred]
-truth = [i.replace("\n", '') for i in t.readlines()]
-truth = [md.detokenize(i.strip().split()) for i in truth]
-
-print("sample 1st pred sentence:", pred[:10])
-print("sample 1st truth sentence:", truth[:10])
-
-assert len(pred) == len(truth)
-print(len(pred))
-print(len(truth))
-
-total_bleu = []
-for i in range(len(pred)):
-    bleu = sacrebleu.corpus_bleu(pred[i],truth[i])
-    total_bleu.append(bleu.score)
+        pred = md.detokenize(decode_tokens.strip().split())
+        truth = md.detokenize(decode_truth.strip().split())
+        bleu = sacrebleu.corpus_bleu(pred, truth)
+        total_bleu.append(bleu.score)
+        print("bleu {}".format(bleu.score))
 
 print('-----------------------------------------------------------------------------------------------------------------')
 print("total bleu :{}".format(sum(total_bleu)/len(total_bleu)))
+
+
 

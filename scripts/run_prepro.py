@@ -32,3 +32,4 @@ prepro = [[data_info.prepro_tr_de, data_info.prepro_tr_en],[data_info.prepro_te_
 for input, output in tqdm(list(zip(raw, prepro))):
     data_prepro(input, output, data_info.model_name+".model")
 print('finished !!')
+

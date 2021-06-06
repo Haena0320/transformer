@@ -32,9 +32,14 @@ def data_prepro(input_path, save_path, model_path):
     ids2 = [np.array(sp.EncodeAsIds(line)) for line in f2.readlines()]
 
 
+    print(ids1[:10])
+    print(ids2[:10])
     print("english prepro dataset : {}".format(len(ids1)))
     print("german prepro dataset : {}".format(len(ids2)))
 
     torch.save(ids1, save_path[0])
     torch.save(ids2, save_path[1])
     logging.info("data saved ! ")
+    
+
+
