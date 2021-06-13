@@ -92,54 +92,55 @@ class Trainer:
 
 
         for data in tqdm(self.data_loader, desc="Epoch : {}".format(epoch)):
-            #with amp.autocast():
-            encoder_input = data["encoder"].to(self.device)  # 16, 100
-            decoder_input = data["decoder"].to(self.device)  # 16, 100
+            with amp.autocast():
+                encoder_input = data["encoder"].to(self.device)  # 16, 100
+                decoder_input = data["decoder"].to(self.device)  # 16, 100
 
-            loss = model(encoder_input, decoder_input)
-            # model(encoder_input, decoder_input)
-            if self.type == 'train':
-                if self.global_step % self.ckpnt_step == 0:
-                    torch.save({"epoch": epoch,
-                                "model_state_dict": model.state_dict(),
-                                "optimizer_state_dict": self.optimizer.state_dict(),
-                                "lr_step":self.scheduler._step},
-                               save_path + "/ckpnt_{}".format(epoch))
+                loss = model(encoder_input, decoder_input)
+                self.writer.add_scalar("train/vanila//loss",loss.item(), self.step)
+                # model(encoder_input, decoder_input)
+                if self.type == 'train':
+                    if self.global_step % self.ckpnt_step == 0:
+                        torch.save({"epoch": epoch,
+                                    "model_state_dict": model.state_dict(),
+                                    "optimizer_state_dict": self.optimizer.state_dict(),
+                                    "lr_step":self.scheduler._step},
+                                save_path + "/ckpnt_{}".format(epoch))
 
-                self.optim_process(model, self.step, loss)
-                self.step += 1
+                    self.optim_process(model, self.step, loss)
+                    self.step += 1
 
 
-            else:
-                sos = decoder_input[:, 0]  # bs
-                sos = sos.unsqueeze(1)  # (bs, 1)
+                else:
+                    sos = decoder_input[:, 0]  # bs
+                    sos = sos.unsqueeze(1)  # (bs, 1)
 
-                bs, max_sent_len = decoder_input.size()
-                max_sent_len += 50
+                    bs, max_sent_len = decoder_input.size()
+                    max_sent_len += 50
 
-                pred_token = torch.zeros(bs, max_sent_len)
-                for i in range(max_sent_len):
-                    y = model.search(encoder_input, sos)  # bs,
-                    pred_token[:, i] = y
-                    sos = torch.cat([sos, y.unsqueeze(1)], dim=-1)
+                    pred_token = torch.zeros(bs, max_sent_len)
+                    for i in range(max_sent_len):
+                        y = model.search(encoder_input, sos)  # bs,
+                        pred_token[:, i] = y
+                        sos = torch.cat([sos, y.unsqueeze(1)], dim=-1)
 
-                pred_token = pred_token.tolist()
-                for i, token in enumerate(pred_token):
-                    for j in range(len(token)):
-                        if token[j] == 2:
-                            token = token[:j]
-                            break
-                    print("-----------------------------------------------------")
-                    token = [int(t) for t in token]
-                    decode_tokens = sp.DecodeIds(token)
-                    decode_truth = sp.DecodeIds(decoder_input[i, :].tolist())
-                    print(decode_tokens)
-                    print(decode_truth)
-                    pred = md.detokenize(decode_tokens.strip().split())
-                    truth = md.detokenize(decode_truth.strip().split())
-                    bleu = sacrebleu.corpus_bleu(pred, truth)
-                    total_bleu.append(bleu.score)
-                    print("bleu {}".format(bleu.score))
+                    pred_token = pred_token.tolist()
+                    for i, token in enumerate(pred_token):
+                        for j in range(len(token)):
+                            if token[j] == 2:
+                                token = token[:j]
+                                break
+                        print("-----------------------------------------------------")
+                        token = [int(t) for t in token]
+                        decode_tokens = sp.DecodeIds(token)
+                        decode_truth = sp.DecodeIds(decoder_input[i, :].tolist())
+                        print(decode_tokens)
+                        print(decode_truth)
+                        pred = md.detokenize(decode_tokens.strip().split())
+                        truth = md.detokenize(decode_truth.strip().split())
+                        bleu = sacrebleu.corpus_bleu(pred, truth)
+                        total_bleu.append(bleu.score)
+                        print("bleu {}".format(bleu.score))
 
         if self.type != "train":
             print("total_bleu per epoch : {}".format(sum(total_bleu) / len(total_bleu)))
@@ -148,16 +149,19 @@ class Trainer:
 
 
     def optim_process(self, model, optim_step, loss):
+        loss_ = loss.detach()
+        self.train_loss.append(loss_.data)
         loss /= self.accum
-        #self.gradscaler.scale(loss).backward()
-        loss.backward()
+        self.gradscaler.scale(loss).backward()
+        #loss.backward()
         if optim_step % self.accum == 0:
-            #self.gradscaler.unscale_(self.optimizer)
+            self.gradscaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.train.clip)
-            # self.gradscaler.step(self.optimizer)
-            # self.gradscaler.update()
+            self.gradscaler.step(self.optimizer)
+            self.gradscaler.update()
             self.scheduler.step()
-            self.optimizer.step()
+            #self.optimizer.step()
             self.optimizer.zero_grad()
-            self.log_writer(loss.data*self.accum, self.global_step)
+            self.log_writer(sum(self.train_loss)/len(self.train_loss), self.global_step)
+            self.train_loss = list()
             self.global_step += 1

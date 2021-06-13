@@ -23,7 +23,7 @@ assert args.dataset in ["en_de", "en_fr"]
 
 logging.info("Building vocab ")
 data_info = config.data_info[args.dataset]
-encoding(data_info.raw_tr_total, data_info.vocab_size, data_info.vocab_path,  data_info.model_name, data_info.model_type)
+#encoding(data_info.raw_tr_total, data_info.vocab_size, data_info.vocab_path,  data_info.model_name, data_info.model_type)
 
 logging.info("make data ! ")
 raw =[[data_info.raw_tr_de, data_info.raw_tr_en],[data_info.raw_te_de, data_info.raw_te_en]]

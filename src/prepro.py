@@ -1,7 +1,3 @@
-from torchtext.vocab import build_vocab_from_iterator
-from torch.utils.data import Dataset, DataLoader
-from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import Vocab
 import logging
 import numpy as np
 import sentencepiece as spm
@@ -18,9 +14,6 @@ def encoding(input_file, vocab_size, vocab_path, model_name, model_type):
     spm.SentencePieceTrainer.Train(cmd)
     logging.info("model, vocab finished ! ")
     f = open(model_name+".vocab", encoding="utf-8")
-    v = [doc.strip().split("\t") for doc in f]
-    word2idx = {w[0]: i for i, w in enumerate(v)}
-    torch.save(word2idx, vocab_path)
 
 def data_prepro(input_path, save_path, model_path):
     f1 = open(input_path[0])
@@ -28,8 +21,15 @@ def data_prepro(input_path, save_path, model_path):
     sp = spm.SentencePieceProcessor()
     sp.Load(model_path)
     sp.SetEncodeExtraOptions("bos:eos")
-    ids1 = [np.array(sp.EncodeAsIds(line)) for line in f1.readlines()]
-    ids2 = [np.array(sp.EncodeAsIds(line)) for line in f2.readlines()]
+    
+    en_line = [line.split("\n")[0] for line in f1.readlines()]
+    de_line = [line.split("\n")[0] for line in f2.readlines()]
+
+    print(en_line[-10:])
+    print(de_line[-10:])
+
+    ids1 = [np.array(sp.EncodeAsIds(line)) for line in en_line]
+    ids2 = [np.array(sp.EncodeAsIds(line)) for line in de_line]
 
 
     print(ids1[:10])
@@ -41,5 +41,3 @@ def data_prepro(input_path, save_path, model_path):
     torch.save(ids2, save_path[1])
     logging.info("data saved ! ")
     
-
-

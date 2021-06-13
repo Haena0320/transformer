@@ -88,7 +88,7 @@ tester = train.get_trainer(config, args,device, test_loader, writer, "test")
 
 if args.use_pretrained:
     #ck_path = oj(ckpnt_loc, "/ckpnt_{}".format(args.use_pretrained))
-    ck_path = "/data/user15/workspace/Transformer/log/0.001/ckpnt/ckpnt_1"
+    ck_path = "/data/user15/workspace/Transformer/log/0.001/ckpnt/ckpnt_1" #7
     checkpoint = torch.load(ck_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
@@ -118,5 +118,5 @@ else:
 
 for epoch in tqdm(range(1, total_epoch+1)):
     trainer.train_epoch(model, epoch, save_path=ckpnt_loc)
-    tester.train_epoch(model, epoch, save_path=ckpnt_loc, sp=sp, md=md)
+    #tester.train_epoch(model, epoch, save_path=ckpnt_loc, sp=sp, md=md)
 print('finished...')

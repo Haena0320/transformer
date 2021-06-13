@@ -16,21 +16,19 @@ class WordEncoding(nn.Module):
         return self.embedding(x)
 
 class PositionEncoding(nn.Module):
-    def __init__(self, d_model, max_len=1000, device=None):
+    def __init__(self, D, max_len=128, device=None):
         super(PositionEncoding, self).__init__()
         self.device=device
-        self.d_model = d_model
+        self.pos_encoding = torch.empty(max_len, D, device=device)
+        for pos in range(max_len):
+            for i in range(D//2):
+                exponent = pos / (10000**(2*i/D))
+                exponent = torch.FloatTensor([exponent]).to(device)
+                self.pos_encoding[pos][2*i] = torch.sin(exponent).to(device)
+                self.pos_encoding[pos][2*i+1] = torch.cos(exponent).to(device)
 
-    def forward(self, inputs):
-        bs, seq = inputs.size()
-        # batch size, sequence
-        self.position_emb = torch.zeros(seq, self.d_model, requires_grad=False)
-        position = torch.arange(0., seq).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, self.d_model, 2) * - (math.log(1e4) / self.d_model))
-        self.position_emb[:, 0::2] = torch.sin(position * div_term)
-        self.position_emb[:, 1::2] = torch.cos(position * div_term)
-        outputs = self.position_emb.unsqueeze(0).repeat(inputs.size(0), 1, 1).to(self.device)
-        return outputs
+    def forward(self):
+        return self.pos_encoding
 
 class ScaledDotProduct(nn.Module):
     def __init__(self, dropout= 0.1, device=None):
@@ -45,7 +43,7 @@ class ScaledDotProduct(nn.Module):
         # attn_mask (bs, seq_k)
         bs_h, K, dimension_k = key.size()
         _, Q, _ = query.size()
-        attn_output = torch.bmm(query, key.transpose(1,2))/dimension_k**0.5 # attn_output : (bs*h, seq_q, seq_k)
+        attn_output = torch.bmm(query, key.transpose(1,2))/(dimension_k**0.5) # attn_output : (bs*h, seq_q, seq_k)
         # padd mask
         bs, _ = attn_mask.size()
         h = bs_h // bs
@@ -62,7 +60,7 @@ class ScaledDotProduct(nn.Module):
 
         attn_output = F.softmax(attn_output, dim=-1)
         attn_output = F.dropout(attn_output, p=self.dropout)
-        output = torch.bmm(attn_output,value) # output : (bs, seq_q, d_model)
+        output = torch.bmm(attn_output,value) # output : (bs*h, seq_q, d_model)
 
         return output
 
@@ -148,7 +146,7 @@ class EncoderLayer(nn.Module):
         out1 = self.attn_out(attn_out)
         out = self.norm1(input+self.dropout1(out1))
         out2= self.linear2(self.activation(self.linear1(out)))
-        out = self.norm2(out1+self.dropout2(out2))
+        out = self.norm2(out+self.dropout2(out2))
         return out
 
 
@@ -223,11 +221,10 @@ class TransformerEncoder(nn.Module):
         for layer in self.layers:
             layer.init_weights()
 
-    def forward(self, input, mask=None):
-        output = input
+    def forward(self, src, mask=None):
         for layer in self.layers:
-            output = layer(output, mask=mask)
-        return output
+            src = layer(src, mask=mask)
+        return src
 
 class TransformerDecoder(nn.Module):
     def __init__(self, layer, num_layers, device):
@@ -241,22 +238,24 @@ class TransformerDecoder(nn.Module):
         for layer in self.layers:
             layer.init_weights()
 
-    def forward(self, input,enc, mask=None):
-        output = input
+    def forward(self, src,enc, mask=None):
         for layer in self.layers:
-            output = layer(input, enc, mask=mask)
-        return output
+            src = layer(src, enc, mask=mask)
+        return src
 
 class Embedding(nn.Module):
     def __init__(self,d_model, embed_weights, device):
         super(Embedding, self).__init__()
         self.word_embed = WordEncoding(embed_weights, d_model).to(device)
-        self.posit_embed = PositionEncoding(d_model=d_model, device=device)
+        self.posit_embed = PositionEncoding(D=d_model, device=device)
+        self.d_model = d_model
         #self.norm = LayerNorm(d_model)
         self.dropout = Dropout(p=0.1)
 
     def forward(self, input):
-        output = self.word_embed(input)+self.posit_embed(input)
+        output = self.word_embed(input)
+        output *= self.d_model**(0.5)
+        output += self.posit_embed()
         return self.dropout(output)
 
 
@@ -292,13 +291,18 @@ class TransformerModel(nn.Module):
         :param y: (bs, max_length)
         :return: (bs, max_length-1)
         """
+        x_mask = x.detach()
+        y_mask = y.detach()
+
+        labels = y.detach()
+        
         # forward
         enc_emb = self.emb(x)
-        enc_output = self.enc(enc_emb, mask=x)
+        enc_output = self.enc(enc_emb, mask=x_mask)
         dec_emb = self.emb(y)
-        dec_output = self.dec(dec_emb, enc_output, mask=[y, x])
+        dec_output = self.dec(dec_emb, enc_output, mask=[y_mask, x_mask])
         dec_output = self.criterion(dec_output)
-        loss = get_loss(y, dec_output)
+        loss = get_loss(labels, dec_output)
         return loss
 
     def search(self, x, y):
@@ -307,13 +311,15 @@ class TransformerModel(nn.Module):
         :param y: (bs, n)
         :return: (bs, n)
         """
+        x_mask = x.detach()
+        y_mask = y.detach()
         # encoding forward
         enc_emb = self.emb(x)
-        enc_output = self.enc(enc_emb, mask=x)
+        enc_output = self.enc(enc_emb, mask=x_mask)
 
         # auto regressive
         dec_emb = self.emb(y)
-        dec_output = self.dec(dec_emb, enc_output, mask=[y, x])
+        dec_output = self.dec(dec_emb, enc_output, mask=[y_mask, x_mask])
         dec_output = self.criterion(dec_output) # (bs, n, vocab_size)
 
         # decoding

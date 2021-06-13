@@ -43,7 +43,6 @@ class positional_encoding(nn.Module):
         super(positional_encoding, self).__init__()
         self.h_units = h_units
         self.zero_pad = zero_pad
-        self.scale = scale
 
     def forward(self, inputs):
         bs, seq = inputs.size() # batch size, sequence
