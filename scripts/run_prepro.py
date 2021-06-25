@@ -8,6 +8,7 @@ from src.data_load import *
 import logging
 import sentencepiece as spm
 from tqdm import tqdm
+import torch
 
 args = argparse.ArgumentParser()
 args.add_argument("--mode", type=str, default="Q_Q")
@@ -26,10 +27,13 @@ data_info = config.data_info[args.dataset]
 #encoding(data_info.raw_tr_total, data_info.vocab_size, data_info.vocab_path,  data_info.model_name, data_info.model_type)
 
 logging.info("make data ! ")
-raw =[[data_info.raw_tr_de, data_info.raw_tr_en],[data_info.raw_te_de, data_info.raw_te_en]]
-prepro = [[data_info.prepro_tr_de, data_info.prepro_tr_en],[data_info.prepro_te_de, data_info.prepro_te_en]]
+raw =[[data_info.raw_tr_en, data_info.raw_tr_de], [data_info.raw_te_en, data_info.raw_te_de]]
+prepro = [[data_info.prepro_tr_en, data_info.prepro_tr_de], [data_info.prepro_te_en, data_info.prepro_te_de]]
 
 for input, output in tqdm(list(zip(raw, prepro))):
+    print(input)
+    print(output)
     data_prepro(input, output, data_info.model_name+".model")
-print('finished !!')
+
+print('finished !! ')
 

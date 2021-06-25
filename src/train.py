@@ -8,6 +8,7 @@ from tqdm import tqdm
 from torch.cuda import amp
 from sacremoses import MosesDetokenizer
 import sacrebleu
+import torch.nn as nn
 
 
 ## train_loader
@@ -18,13 +19,12 @@ def get_optimizer(model, args_optim):
     if args_optim == "adam":
         return torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-09)
     if args_optim == 'adamW':
-        return torch.optim.AdamW(model.parameters(), lr=0, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
+        return torch.optim.AdamW(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-09, weight_decay=0.01, amsgrad=False)
 
 
 def get_lr_schedular(optimizer, config):
     h_units = config.model.h_units
     warmup = config.train.warmup
-    # return torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.001, max_lr=0.1, step_size_up=4000, step_size_down=total_iter_num,cycle_momentum=False, mode='triangular')
     return WarmupLinearshedular(optimizer, h_units, warmup)
 
 
@@ -39,8 +39,7 @@ class WarmupLinearshedular:
     def step(self):
         self._step += 1
         rate = self.rate()
-        for p in self.optimizer.param_groups:
-            p["lr"] = rate
+        self.optimizer.param_groups[0]["lr"] = rate
         self._rate = rate
 
     def rate(self, step=None):
@@ -62,10 +61,9 @@ class Trainer:
         self.gradscaler = amp.GradScaler()
         self.global_step = 1
         self.step = 0
-        self.train_loss = list()
-        if self.type != "train":
-            self.md = MosesDetokenizer(lang="du")
-
+        self.train_loss = 0
+        #self.loss_fn = LabelSmoothingLoss(label_smoothing=0.1,tgt_vocab_size=37000, device=device)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=0)
     def init_optimizer(self, optimizer):
         self.optimizer = optimizer
 
@@ -91,14 +89,15 @@ class Trainer:
         model.to(self.device)
 
 
-        for data in tqdm(self.data_loader, desc="Epoch : {}".format(epoch)):
+        for data in tqdm(self.data_loader, desc="Epoch : {}".format(epoch), ncols = 100):
             with amp.autocast():
                 encoder_input = data["encoder"].to(self.device)  # 16, 100
-                decoder_input = data["decoder"].to(self.device)  # 16, 100
+                decoder_input = data["decoder"][:, :-1].to(self.device)  # 16, 99
+                decoder_label = data["decoder"][:, 1:].to(self.device) # 16, 99
+                output = model(encoder_input, decoder_input)
+                B, S = decoder_label.size()
+                loss = self.loss_fn(output.view(B*S, -1), decoder_label.view(-1))
 
-                loss = model(encoder_input, decoder_input)
-                self.writer.add_scalar("train/vanila//loss",loss.item(), self.step)
-                # model(encoder_input, decoder_input)
                 if self.type == 'train':
                     if self.global_step % self.ckpnt_step == 0:
                         torch.save({"epoch": epoch,
@@ -110,38 +109,6 @@ class Trainer:
                     self.optim_process(model, self.step, loss)
                     self.step += 1
 
-
-                else:
-                    sos = decoder_input[:, 0]  # bs
-                    sos = sos.unsqueeze(1)  # (bs, 1)
-
-                    bs, max_sent_len = decoder_input.size()
-                    max_sent_len += 50
-
-                    pred_token = torch.zeros(bs, max_sent_len)
-                    for i in range(max_sent_len):
-                        y = model.search(encoder_input, sos)  # bs,
-                        pred_token[:, i] = y
-                        sos = torch.cat([sos, y.unsqueeze(1)], dim=-1)
-
-                    pred_token = pred_token.tolist()
-                    for i, token in enumerate(pred_token):
-                        for j in range(len(token)):
-                            if token[j] == 2:
-                                token = token[:j]
-                                break
-                        print("-----------------------------------------------------")
-                        token = [int(t) for t in token]
-                        decode_tokens = sp.DecodeIds(token)
-                        decode_truth = sp.DecodeIds(decoder_input[i, :].tolist())
-                        print(decode_tokens)
-                        print(decode_truth)
-                        pred = md.detokenize(decode_tokens.strip().split())
-                        truth = md.detokenize(decode_truth.strip().split())
-                        bleu = sacrebleu.corpus_bleu(pred, truth)
-                        total_bleu.append(bleu.score)
-                        print("bleu {}".format(bleu.score))
-
         if self.type != "train":
             print("total_bleu per epoch : {}".format(sum(total_bleu) / len(total_bleu)))
         else:
@@ -149,19 +116,19 @@ class Trainer:
 
 
     def optim_process(self, model, optim_step, loss):
-        loss_ = loss.detach()
-        self.train_loss.append(loss_.data)
+        self.train_loss += loss.item() / self.accum
         loss /= self.accum
         self.gradscaler.scale(loss).backward()
-        #loss.backward()
+
         if optim_step % self.accum == 0:
             self.gradscaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.train.clip)
+
+            self.scheduler.step()
             self.gradscaler.step(self.optimizer)
             self.gradscaler.update()
-            self.scheduler.step()
-            #self.optimizer.step()
             self.optimizer.zero_grad()
-            self.log_writer(sum(self.train_loss)/len(self.train_loss), self.global_step)
-            self.train_loss = list()
+            self.log_writer(self.train_loss, self.global_step)
+
+            self.train_loss = 0
             self.global_step += 1

@@ -44,3 +44,4 @@ class Make_Dataset(Dataset):
 
     def __getitem__(self, idx):
         return {"encoder":torch.LongTensor(self.encoder_input[idx]), "decoder":torch.LongTensor(self.decoder_input[idx])}
+

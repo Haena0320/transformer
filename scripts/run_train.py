@@ -8,7 +8,6 @@ import sentencepiece as spm
 import torch
 from src.utils import *
 from src.train import *
-from src.prepro import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--mode", type=str, default=">____<")
@@ -27,7 +26,7 @@ parser.add_argument('--layer_size', type=int, default=2)
 parser.add_argument("--embedding_dim", type=int, default=300)
 parser.add_argument("--h_units", type=int, default=128)
 parser.add_argument("--dropout", type=float, default=0.5)
-parser.add_argument("--optim", type=str, default="adamW")
+parser.add_argument("--optim", type=str, default="adam")
 parser.add_argument("--g_norm", type=str, default=5)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
@@ -68,10 +67,6 @@ import sacrebleu
 from sacremoses import MosesDetokenizer
 md = MosesDetokenizer(lang="du")
 
-import sentencepiece as spm
-sp = spm.SentencePieceProcessor()
-sp.Load("bye_pair_encoding.model")
-
 # data loader
 data_info = config.data_info[args.dataset]
 train_list = [data_info.prepro_tr_en, data_info.prepro_tr_de]
@@ -80,15 +75,24 @@ train_loader  = data.get_data_loader(train_list, config.train.batch_size, False,
 test_loader  = data.get_data_loader(test_list, config.train.batch_size, False, 10, True)
 
 # model load
+vocab = config.data_info[args.dataset].vocab_size
+d_model = config.model.h_units
+num_heads = config.model.n_head
+num_layers = config.model.n_blocks
+d_ff = config.model.dim_feedforward
+dropout = config.model.d_rate
+
+#model = model(vocab, d_model, dropout, num_layers, d_model, d_ff, num_heads, device)
 model = model(config, args, device)
+#model.init_weights()
 print(model)
+
 # trainer load
 trainer = train.get_trainer(config, args,device, train_loader, writer, "train")
 tester = train.get_trainer(config, args,device, test_loader, writer, "test")
 
 if args.use_pretrained:
-    #ck_path = oj(ckpnt_loc, "/ckpnt_{}".format(args.use_pretrained))
-    ck_path = "/data/user15/workspace/Transformer/log/0.001/ckpnt/ckpnt_1" #7
+    ck_path = oj(ckpnt_loc, "ckpnt_{}".format(args.use_pretrained))
     checkpoint = torch.load(ck_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
@@ -102,7 +106,6 @@ if args.use_pretrained:
     trainer.init_schedular(schedular)
 
     total_epoch =18
-
     model.train()
 
 else:
@@ -116,7 +119,7 @@ else:
     total_epoch = max(total_epoch, 1)
     print("total epoch {}".format(total_epoch))
 
-for epoch in tqdm(range(1, total_epoch+1)):
+for epoch in tqdm(range(1, total_epoch+1), ncols=100):
     trainer.train_epoch(model, epoch, save_path=ckpnt_loc)
     #tester.train_epoch(model, epoch, save_path=ckpnt_loc, sp=sp, md=md)
 print('finished...')
